@@ -1,8 +1,12 @@
 import React from 'react';
-import { Globe, Zap, MessageSquare, PhoneCall, Server, Monitor } from 'lucide-react';
+import { Globe, Zap, MessageSquare, PhoneCall, Server, Monitor, LogOut, Users } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { useAuth } from '../contexts/AuthContext';
+import { apiFetch } from '../services/authService';
 
 export default function Sidebar({ status, setStatus, bridgeHealth = {} }) {
+  const { user, logout } = useAuth();
+
   const containerVariants = {
     hidden: { opacity: 0 },
     show: {
@@ -19,8 +23,26 @@ export default function Sidebar({ status, setStatus, bridgeHealth = {} }) {
   const isOnline = bridgeHealth.status === 'ok';
   const isBrowserOk = bridgeHealth.browser === true;
 
+  const handleAction = async (actionName, endpoint) => {
+    setStatus({ text: `🚀 ${actionName}...`, active: true });
+    try {
+      const res = await apiFetch(endpoint);
+      if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setStatus({ text: `❌ Falha: ${data.error || 'Erro na ponte'}`, active: true });
+      }
+    } catch (e) {
+      setStatus({ text: '❌ Erro de conexão com a ponte', active: true });
+    }
+  };
+
+  const hasAccess = (allowedProfiles) => {
+    return user && allowedProfiles.includes(user.perfil);
+  };
+
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* Top Logo */}
       <motion.div 
         initial={{ opacity: 0, scale: 0.8 }}
         animate={{ opacity: 1, scale: 1 }}
@@ -32,6 +54,7 @@ export default function Sidebar({ status, setStatus, bridgeHealth = {} }) {
         </div>
       </motion.div>
 
+      {/* Status da Ponte */}
       <motion.div 
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -44,7 +67,7 @@ export default function Sidebar({ status, setStatus, bridgeHealth = {} }) {
         </div>
       </motion.div>
 
-      {/* ===== INDICADOR DE SAÚDE DA PONTE ===== */}
+      {/* Indicador de Saúde da Ponte */}
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -113,11 +136,13 @@ export default function Sidebar({ status, setStatus, bridgeHealth = {} }) {
         )}
       </motion.div>
 
+      {/* Navegação Dinâmica */}
       <motion.nav 
         variants={containerVariants}
         initial="hidden"
         animate="show"
         className="sidebar-nav"
+        style={{ flex: 1, overflowY: 'auto' }}
       >
         <div className="nav-section">
           <motion.span variants={itemVariants} className="nav-label">Ferramentas</motion.span>
@@ -126,25 +151,22 @@ export default function Sidebar({ status, setStatus, bridgeHealth = {} }) {
             whileHover={{ scale: 1.02, x: 4 }}
             whileTap={{ scale: 0.98 }}
             className="nav-button"
-            onClick={() => {
-              setStatus({ text: '🚀 Abrindo VTME...', active: true });
-              fetch('http://localhost:3001/open-vtme');
-            }}
+            onClick={() => handleAction('Abrindo VTME', '/open-vtme')}
           >
             <Globe size={18} /> Abrir VTME
           </motion.button>
-          <motion.button
-            variants={itemVariants}
-            whileHover={{ scale: 1.02, x: 4 }}
-            whileTap={{ scale: 0.98 }}
-            className="nav-button"
-            onClick={() => {
-              setStatus({ text: '🚀 Abrindo App Tim...', active: true });
-              fetch('http://localhost:3001/open-tim');
-            }}
-          >
-            <Zap size={18} /> App Tim Vendas
-          </motion.button>
+          
+          {hasAccess(['ADMIN', 'GERENTE', 'SUPERVISOR']) && (
+            <motion.button
+              variants={itemVariants}
+              whileHover={{ scale: 1.02, x: 4 }}
+              whileTap={{ scale: 0.98 }}
+              className="nav-button"
+              onClick={() => handleAction('Abrindo App Tim', '/open-tim')}
+            >
+              <Zap size={18} /> App Tim Vendas
+            </motion.button>
+          )}
         </div>
 
         <div className="nav-section">
@@ -154,10 +176,7 @@ export default function Sidebar({ status, setStatus, bridgeHealth = {} }) {
             whileHover={{ scale: 1.02, x: 4 }}
             whileTap={{ scale: 0.98 }}
             className="nav-button"
-            onClick={() => {
-              setStatus({ text: '🚀 Abrindo WhatsApp...', active: true });
-              fetch('http://localhost:3001/open-whatsapp');
-            }}
+            onClick={() => handleAction('Abrindo WhatsApp', '/open-whatsapp')}
           >
             <MessageSquare size={18} /> WhatsApp Web
           </motion.button>
@@ -166,15 +185,63 @@ export default function Sidebar({ status, setStatus, bridgeHealth = {} }) {
             whileHover={{ scale: 1.02, x: 4 }}
             whileTap={{ scale: 0.98 }}
             className="nav-button"
-            onClick={() => {
-              setStatus({ text: '🚀 Abrindo 3C Plus...', active: true });
-              fetch('http://localhost:3001/open-3c');
-            }}
+            onClick={() => handleAction('Abrindo 3C Plus', '/open-3c')}
           >
             <PhoneCall size={18} /> 3C Plus
           </motion.button>
         </div>
       </motion.nav>
+
+      {/* Painel do Usuário Logado no Rodapé */}
+      {user && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          style={{
+            padding: '15px',
+            borderTop: '1px solid var(--border)',
+            background: 'rgba(15, 23, 42, 0.4)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '10px'
+          }}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', overflow: 'hidden' }}>
+            <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#FFFFFF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {user.nome}
+            </span>
+            <span style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              {user.perfil}
+            </span>
+          </div>
+          <button
+            title="Sair do sistema"
+            onClick={logout}
+            style={{
+              padding: '8px',
+              background: 'rgba(239, 68, 68, 0.1)',
+              border: '1px solid rgba(239, 68, 68, 0.2)',
+              borderRadius: '8px',
+              color: '#EF4444',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: 'all 0.2s'
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)';
+            }}
+          >
+            <LogOut size={14} />
+          </button>
+        </motion.div>
+      )}
     </aside>
   );
 }
+

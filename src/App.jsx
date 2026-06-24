@@ -21,11 +21,15 @@ import {
   User,
   Send,
   Phone,
-  Settings
+  Settings,
+  Users
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { useLocalStorageState } from './hooks/useLocalStorageState';
 import { useStore } from './store';
+import { useAuth } from './contexts/AuthContext';
+import { apiFetch } from './services/authService';
 import Modal from './components/Modal';
 import Sidebar from './components/Sidebar';
 import TemplateModal from './components/TemplateModal';
@@ -40,10 +44,57 @@ import WhatsAppToolbar from './components/WhatsAppToolbar';
 import SettingsPanel from './components/SettingsPanel';
 import ToastContainer, { showToast } from './components/Toast';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import LoginPage from './pages/LoginPage';
+import CadastroUsuariosPage from './pages/CadastroUsuariosPage';
+import ProtectedRoute from './components/ProtectedRoute';
 import { DEFAULT_WA_TEMPLATES, formatPhone, buildTemplatePreview, extractContactsFromRows, normalizePhone, copyTextToClipboard, parsePhoneNumbers } from './utils';
 
-export default function App() {
+function AppMain() {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [activeTab, setActiveTab] = useState('extraction');
+
+  // Sincroniza a aba ativa com a URL e protege contra acessos manuais indevidos
+  useEffect(() => {
+    const path = location.pathname;
+    
+    const checkAccess = (allowed) => {
+      return user && allowed.includes(user.perfil);
+    };
+
+    if (path === '/' || path === '/extraction') {
+      setActiveTab('extraction');
+    } else if (path === '/whatsapp') {
+      setActiveTab('whatsapp');
+    } else if (path === '/dashboard') {
+      if (checkAccess(['ADMIN', 'GERENTE', 'SUPERVISOR'])) {
+        setActiveTab('dashboard');
+      } else {
+        navigate('/extraction', { replace: true });
+      }
+    } else if (path === '/timvendas') {
+      if (checkAccess(['ADMIN', 'GERENTE', 'SUPERVISOR'])) {
+        setActiveTab('timvendas');
+      } else {
+        navigate('/extraction', { replace: true });
+      }
+    } else if (path === '/settings') {
+      if (checkAccess(['ADMIN'])) {
+        setActiveTab('settings');
+      } else {
+        navigate('/extraction', { replace: true });
+      }
+    } else if (path === '/usuarios') {
+      if (checkAccess(['ADMIN'])) {
+        setActiveTab('usuarios');
+      } else {
+        navigate('/extraction', { replace: true });
+      }
+    } else {
+      navigate('/extraction', { replace: true });
+    }
+  }, [location, user, navigate]);
   const { 
     status, setStatus,
     bridgeHealth, setBridgeHealth,
@@ -88,7 +139,7 @@ export default function App() {
 
   const fetchMasks = async () => {
     try {
-      const response = await fetch('http://localhost:3001/masks');
+      const response = await apiFetch('/masks');
       if (response.ok) {
         const data = await response.json();
         setMasks(data);
@@ -176,9 +227,8 @@ export default function App() {
     }
 
     try {
-      const response = await fetch('http://localhost:3001/masks', {
+      const response = await apiFetch('/masks', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(maskForm),
         signal: AbortSignal.timeout(10000)
       });
@@ -200,7 +250,7 @@ export default function App() {
     
     try {
       const nameToRemove = selectedMask;
-      const response = await fetch(`http://localhost:3001/masks/${encodeURIComponent(nameToRemove)}`, {
+      const response = await apiFetch(`/masks/${encodeURIComponent(nameToRemove)}`, {
         method: 'DELETE',
         signal: AbortSignal.timeout(10000)
       });
@@ -246,7 +296,7 @@ export default function App() {
     setStatus({ text: `🤖 Extraindo ${source.toUpperCase()}... Por favor, aguarde.`, active: true });
     
     try {
-      const response = await fetch(`http://localhost:3001${endpoint}`, { signal: AbortSignal.timeout(timeoutMs) });
+      const response = await apiFetch(endpoint, { signal: AbortSignal.timeout(timeoutMs) });
       if (!response.ok) throw new Error('Servidor off');
       
       const dataExtraida = await response.json();
@@ -395,9 +445,8 @@ export default function App() {
     try {
       setIsInjectingToken(true);
       setStatus({ text: '🔐 Injetando Token RSA no TIM Vendas...', active: true });
-      const response = await fetch('http://localhost:3001/login-tim', {
+      const response = await apiFetch('/login-tim', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token }),
         signal: AbortSignal.timeout(20000)
       });
@@ -444,7 +493,7 @@ export default function App() {
     toggleCalled(number); // Marca como realizado azul
     
     try {
-      const response = await fetch(`http://localhost:3001/dial-3c?number=${number}`, { signal: AbortSignal.timeout(15000) });
+      const response = await apiFetch(`/dial-3c?number=${number}`, { signal: AbortSignal.timeout(15000) });
       const data = await response.json();
       
       if (data.status === '3C_OPENED') {
@@ -469,7 +518,7 @@ export default function App() {
     setStatus({ text: `✉️ Enviando para ${formatPhone(cleanNum)}...`, active: true });
 
     try {
-      const response = await fetch(`http://localhost:3001/send-whatsapp?number=${cleanNum}&message=${encodeURIComponent(message)}`, { signal: AbortSignal.timeout(45000) });
+      const response = await apiFetch(`/send-whatsapp?number=${cleanNum}&message=${encodeURIComponent(message)}`, { signal: AbortSignal.timeout(45000) });
       const data = await response.json();
 
       if (data.success) {
@@ -493,7 +542,8 @@ export default function App() {
 
   // WhatsApp Engine SSE Listener
   useEffect(() => {
-    const sse = new EventSource('http://localhost:3001/api/whatsapp/stream');
+    const token = localStorage.getItem('vtme_token');
+    const sse = new EventSource(`http://localhost:3001/api/whatsapp/stream?token=${encodeURIComponent(token)}`);
     sse.onmessage = (e) => {
       const data = JSON.parse(e.data);
       setDispatchState({
@@ -509,17 +559,17 @@ export default function App() {
   }, []);
 
   const pauseBatchDispatch = async () => {
-        await fetch('http://localhost:3001/api/whatsapp/pause', { method: 'POST' });
+        await apiFetch('/api/whatsapp/pause', { method: 'POST' });
     setStatus({ text: '⏸️ Disparo em lote PAUSADO pelo usuário.', active: true });
   };
 
   const resumeBatchDispatch = async () => {
-        await fetch('http://localhost:3001/api/whatsapp/resume', { method: 'POST' });
+        await apiFetch('/api/whatsapp/resume', { method: 'POST' });
     setStatus({ text: '🚀 Retomando disparos...', active: true });
   };
 
   const stopBatchDispatch = async () => {
-        await fetch('http://localhost:3001/api/whatsapp/cancel', { method: 'POST' });
+        await apiFetch('/api/whatsapp/cancel', { method: 'POST' });
     setStatus({ text: '🛑 Disparo em lote PARADO pelo usuário.', active: true });
   };
 
@@ -545,9 +595,8 @@ export default function App() {
 
     setStatus({ text: `🚀 Iniciando disparo para ${pendingItems.length} contatos...`, active: true });
 
-    await fetch('http://localhost:3001/api/whatsapp/start', {
+    await apiFetch('/api/whatsapp/start', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contacts: sendList,
         message: waMessage,
@@ -733,7 +782,7 @@ export default function App() {
   const handleLaunchSpreadsheet = async () => {
     setStatus({ text: '📊 Lançando na Planilha...', active: true });
     try {
-      const res = await fetch('http://localhost:3001/launch-spreadsheet', { signal: AbortSignal.timeout(60000) });
+      const res = await apiFetch('/launch-spreadsheet', { signal: AbortSignal.timeout(60000) });
       if (res.ok) {
         setStatus({ text: '✅ Dados Enviados com Sucesso!', active: true });
       } else {
@@ -748,9 +797,8 @@ export default function App() {
   const handleLaunchMacro = async (pendentes) => {
     setStatus({ text: '📊 Lançando Macro...', active: true });
     try {
-      await fetch('http://localhost:3001/macro-tim', {
+      await apiFetch('/macro-tim', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ data: pendentes }),
         signal: AbortSignal.timeout(60000)
       });
@@ -773,34 +821,48 @@ export default function App() {
             <div style={{ display: 'flex', gap: '5px' }}>
               <button 
                 className={`tab-trigger ${activeTab === 'extraction' ? 'active' : ''}`}
-                onClick={() => setActiveTab('extraction')}
+                onClick={() => navigate('/extraction')}
               >
                 <Zap size={16} /> Extração Inteligente
               </button>
               <button 
                 className={`tab-trigger ${activeTab === 'whatsapp' ? 'active' : ''}`}
-                onClick={() => setActiveTab('whatsapp')}
+                onClick={() => navigate('/whatsapp')}
               >
                 <MessageSquare size={16} /> WhatsApp Qualidade
               </button>
-              <button 
-                className={`tab-trigger ${activeTab === 'dashboard' ? 'active' : ''}`}
-                onClick={() => setActiveTab('dashboard')}
-              >
-                <LayoutDashboard size={16} /> Dashboard Vendas
-              </button>
-              <button 
-                className={`tab-trigger ${activeTab === 'timvendas' ? 'active' : ''}`}
-                onClick={() => setActiveTab('timvendas')}
-              >
-                <Zap size={16} /> Macro Tim Vendas
-              </button>
-              <button 
-                className={`tab-trigger ${activeTab === 'settings' ? 'active' : ''}`}
-                onClick={() => setActiveTab('settings')}
-              >
-                <Settings size={16} /> Configurações
-              </button>
+              {user && ['ADMIN', 'GERENTE', 'SUPERVISOR'].includes(user.perfil) && (
+                <button 
+                  className={`tab-trigger ${activeTab === 'dashboard' ? 'active' : ''}`}
+                  onClick={() => navigate('/dashboard')}
+                >
+                  <LayoutDashboard size={16} /> Dashboard Vendas
+                </button>
+              )}
+              {user && ['ADMIN', 'GERENTE', 'SUPERVISOR'].includes(user.perfil) && (
+                <button 
+                  className={`tab-trigger ${activeTab === 'timvendas' ? 'active' : ''}`}
+                  onClick={() => navigate('/timvendas')}
+                >
+                  <Zap size={16} /> Macro Tim Vendas
+                </button>
+              )}
+              {user && user.perfil === 'ADMIN' && (
+                <button 
+                  className={`tab-trigger ${activeTab === 'settings' ? 'active' : ''}`}
+                  onClick={() => navigate('/settings')}
+                >
+                  <Settings size={16} /> Configurações
+                </button>
+              )}
+              {user && user.perfil === 'ADMIN' && (
+                <button 
+                  className={`tab-trigger ${activeTab === 'usuarios' ? 'active' : ''}`}
+                  onClick={() => navigate('/usuarios')}
+                >
+                  <Users size={16} /> Usuários e Logs
+                </button>
+              )}
             </div>
 
             {/* Título Contextual do Dashboard (alinhado com as abas) */}
@@ -957,6 +1019,19 @@ export default function App() {
                 <SettingsPanel setStatus={setStatus} />
               </motion.div>
             )}
+            {activeTab === 'usuarios' && (
+              <motion.div
+                key="usuarios"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.2 }}
+                className="tab-panel active"
+                style={{ flex: 1, display: 'flex', flexDirection: 'column' }}
+              >
+                <CadastroUsuariosPage />
+              </motion.div>
+            )}
           </AnimatePresence>
 
           <PasteNumbersModal
@@ -1008,5 +1083,18 @@ export default function App() {
       </main>
       <ToastContainer />
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/*" element={
+        <ProtectedRoute>
+          <AppMain />
+        </ProtectedRoute>
+      } />
+    </Routes>
   );
 }

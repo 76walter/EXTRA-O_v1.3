@@ -1,6 +1,6 @@
 import { Server } from 'socket.io';
 import { isExtractingTim, isExtracting, setExtractingTim, setExtracting } from '../browser/manager.js';
-import { ENV } from '../config/env.js';
+import { ENV, INTERNAL_API_KEY } from '../config/env.js';
 
 let connectedClients = 0;
 let vtmeLoopTimer = null;
@@ -58,7 +58,9 @@ export function emitTimData(data) {
 async function runVTME() {
     if (connectedClients === 0) return;
     try {
-        const r = await fetch(`http://localhost:${ENV.PORT}/extract-vtme-auto`);
+        const r = await fetch(`http://localhost:${ENV.PORT}/extract-vtme-auto`, {
+            headers: { 'x-internal-key': INTERNAL_API_KEY }
+        });
         if (r.ok) {
             const data = await r.json();
             emitVtmeData(data);
@@ -75,7 +77,9 @@ async function runVTME() {
 async function runTIM() {
     if (connectedClients === 0) return;
     try {
-        const r = await fetch(`http://localhost:${ENV.PORT}/extract-tim`);
+        const r = await fetch(`http://localhost:${ENV.PORT}/extract-tim`, {
+            headers: { 'x-internal-key': INTERNAL_API_KEY }
+        });
         if (r.ok) {
             const data = await r.json();
             emitTimData(data);

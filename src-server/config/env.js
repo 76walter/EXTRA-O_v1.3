@@ -19,6 +19,9 @@ if (fs.existsSync(ENV_FILE)) {
             const [key, ...val] = line.split('=');
             if (key && val.length > 0) {
                 let value = val.join('=').trim();
+                if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+                    value = value.slice(1, -1);
+                }
                 if (value === 'true') value = true;
                 else if (value === 'false') value = false;
                 else if (!isNaN(Number(value)) && value !== '') value = Number(value);
@@ -29,3 +32,6 @@ if (fs.existsSync(ENV_FILE)) {
         console.error("Erro ao carregar .env:", e.message);
     }
 }
+
+export const INTERNAL_API_KEY = Math.random().toString(36).substring(2) + Date.now().toString(36);
+
