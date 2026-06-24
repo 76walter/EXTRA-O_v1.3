@@ -1,0 +1,18 @@
+node_modules/
+dist/
+user_data/
+user_data_headless/
+
+*.log
+
+comando_dump.txt
+pagina.dump
+sessao.status.md
+tim_dom_dump.html
+
+Churn 01-2026 - Janeiro.xlsx
+Churn 01-2026 Janeiro.xlsx
+sessão.status.md
+documentação.md
+planilha.xlsx
+MACRO APP 2026.xlsm
