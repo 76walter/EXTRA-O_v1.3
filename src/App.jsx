@@ -342,7 +342,9 @@ function AppMain() {
       };
 
       setExtractedData(normalizedData);
-      if (normalizedData.consultora) setVendedor(normalizedData.consultora);
+      if (normalizedData.consultora || normalizedData.consultor) {
+        setVendedor(normalizedData.consultora || normalizedData.consultor);
+      }
       
       setStatus({ text: `✅ Extração Concluída: ${normalizedData.nome_cliente || normalizedData.nome}`, active: true });
 
@@ -360,6 +362,12 @@ function AppMain() {
                  updated[existingIndex] = { ...updated[existingIndex], statusCanc: '✅ SOLICITADO' };
                  setTimeout(() => setCancelamentosHoje(c => c + 1), 0);
              }
+             if (normalizedData.bio && (!updated[existingIndex].bio || updated[existingIndex].bio === '--')) {
+                 updated[existingIndex] = { ...updated[existingIndex], bio: normalizedData.bio };
+             }
+             if (normalizedData.cpf && !updated[existingIndex].cpf) {
+                 updated[existingIndex] = { ...updated[existingIndex], cpf: normalizedData.cpf };
+             }
              return updated;
           } else {
              const newLog = {
@@ -367,8 +375,10 @@ function AppMain() {
                data: new Date().toLocaleDateString('pt-BR'),
                hora: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
                cliente: clientName,
+               cpf: normalizedData.cpf || '',
                uf: normalizedData.uf || '--',
-               consultor: normalizedData.consultora || vendedor || 'Consultor',
+               bio: normalizedData.bio || '--',
+               consultor: normalizedData.consultora || normalizedData.consultor || vendedor || 'Consultor',
                supervisor: normalizedData.supervisor || 'Supervisor',
                statusCanc: isCancMask ? '✅ SOLICITADO' : '⏳ PENDENTE'
              };
@@ -836,7 +846,7 @@ function AppMain() {
                   className={`tab-trigger ${activeTab === 'dashboard' ? 'active' : ''}`}
                   onClick={() => navigate('/dashboard')}
                 >
-                  <LayoutDashboard size={16} /> Dashboard Vendas
+                  <LayoutDashboard size={16} /> Dashboard Vendas Fibra
                 </button>
               )}
               {user && ['ADMIN', 'GERENTE', 'SUPERVISOR'].includes(user.perfil) && (
@@ -999,6 +1009,7 @@ function AppMain() {
               >
                 <MacroTimPanel
                   extractedData={extractedData}
+                  logs={logs}
                   handleExtract={handleExtract}
                   handleLaunchMacro={handleLaunchMacro}
                   setStatus={setStatus}

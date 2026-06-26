@@ -1212,7 +1212,7 @@ app.get('/extract-vtme-auto', async (req, res) => {
 
         if (aguardarCarregamento) {
             console.log("⏳ Aguardando carregamento da aba...");
-            await page.waitForTimeout(4000); 
+            await page.waitForSelector('table[orb-relatorio-table], table.orb-gr2-table, .ui-grid-row', { timeout: 4000 }).catch(() => {});
         } else {
             console.log("✅ Já na aba correta ou aba não encontrada.");
         }
@@ -1225,7 +1225,7 @@ app.get('/extract-vtme-auto', async (req, res) => {
                 select.dispatchEvent(new Event('change'));
             }
         });
-        await page.waitForTimeout(2000);
+        await page.waitForTimeout(1000);
 
         const jaProcessados = Array.from(processedVTMEOrders);
         console.log(`🔍 Iniciando varredura profunda. Já processados hoje: ${jaProcessados.length}`);
@@ -1272,11 +1272,33 @@ app.get('/extract-vtme-auto', async (req, res) => {
 
                     console.log("🤖 Abrindo contrato: " + checkId);
                     btnTarget.click();
-                    await new Promise(r => setTimeout(r, 2500));
+                    for (let w = 0; w < 30; w++) {
+                        if (document.querySelector('.cv-title, orb-icon-v3, [orb-type="cnpj"], [orb-type="cpf"]')) break;
+                        await new Promise(r => setTimeout(r, 100));
+                    }
 
                     const extractInfo = () => {
+                        const getElementByXPath = (xpath) => {
+                            try {
+                                return document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                            } catch (e) {
+                                return null;
+                            }
+                        };
+
                         const getVal = (labelStr) => {
-                            const elements = Array.from(document.querySelectorAll('label, b, strong, span, th, td'));
+                            // Tenta buscar primeiro em elementos customizados de linha (orb-card-row-v3)
+                            const rows = Array.from(document.querySelectorAll('orb-card-row-v3, .orb-card-row-v3'));
+                            for (const r of rows) {
+                                const labelEl = r.querySelector('.ocr-label, label, b, strong, div');
+                                if (labelEl && labelEl.innerText.trim().replace(':', '').toLowerCase() === labelStr.toLowerCase()) {
+                                    const valEl = r.querySelector('.ocr-value, span, div:nth-child(2)');
+                                    if (valEl && valEl.innerText.trim()) return valEl.innerText.trim();
+                                }
+                            }
+
+                            // Fallback para elementos genéricos
+                            const elements = Array.from(document.querySelectorAll('label, b, strong, span, th, td, div'));
                             const target = elements.find(el => {
                                 const txt = (el.innerText || "").trim().replace(':','').toLowerCase();
                                 return txt === labelStr.toLowerCase();
@@ -1297,16 +1319,50 @@ app.get('/extract-vtme-auto', async (req, res) => {
                         const rawCpf = getVal('CPF') || checkId;
                         const cliente = rawCliente.toLowerCase() === 'cliente' ? 'Desconhecido' : rawCliente;
                         const cpf = rawCpf.toLowerCase() === 'cpf' ? checkId : rawCpf;
-                        const consultor = (getVal('Consultor') || "Consultor").split('-')[0].trim();
-                        const supervisor = (getVal('Supervisor') || "Supervisor").split('-')[0].trim();
+
+                        // Tenta primeiro via XPath direcionado (igual na extração manual)
+                        const xpathConsultor = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[8]/orb-card-v3/div/orb-card-row-v3[1]/div/div[2]/div/span";
+                        const xpathSupervisor = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[8]/orb-card-v3/div/orb-card-row-v3[2]/div/div[2]/div/span";
+                        
+                        const consultorEl = getElementByXPath(xpathConsultor);
+                        const supervisorEl = getElementByXPath(xpathSupervisor);
+                        
+                        const rawConsultor = (consultorEl ? consultorEl.innerText.trim() : "") || getVal('Consultor') || "Consultor";
+                        const rawSupervisor = (supervisorEl ? supervisorEl.innerText.trim() : "") || getVal('Supervisor') || "Supervisor";
+
+                        const consultor = rawConsultor.split('-')[0].trim();
+                        const supervisor = rawSupervisor.split('-')[0].trim();
                         const textContent = document.body.innerText.toLowerCase();
                         const isCanc = textContent.includes("cancelamento operação") || textContent.includes("cancelamento operacao");
                         
+                        // Extração de Biometria / BIO
+                        const xpathBio1 = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[3]/orb-card-v3/div/orb-card-row-v3[4]/div/div[2]/div/span[1]";
+                        const xpathBio2 = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[3]/orb-card-v3/div/orb-card-row-v3[4]/div/div[2]/div/span[2]";
+                        
+                        const bioEl1 = getElementByXPath(xpathBio1);
+                        const bioEl2 = getElementByXPath(xpathBio2);
+                        
+                        let bioVal = "";
+                        if (bioEl1 && bioEl2) {
+                            bioVal = `${bioEl1.innerText.trim()} - ${bioEl2.innerText.trim()}`;
+                        } else if (bioEl1) {
+                            bioVal = bioEl1.innerText.trim();
+                        } else if (bioEl2) {
+                            bioVal = bioEl2.innerText.trim();
+                        }
+                        
+                        if (!bioVal) {
+                            bioVal = getVal('Biometria') || getVal('Status Biometria') || getVal('Biometria Facial') || getVal('BIO');
+                        }
+                        
+                        const finalBio = (bioVal || "").trim() || "--";
+
                         return { 
                             cliente, cpf, 
                             consultor: consultor === 'Consultor' ? 'Não Identificado' : consultor,
                             supervisor: supervisor === 'Supervisor' ? 'Não Identificado' : supervisor,
                             uf: document.body.innerText.match(/\/\s*([A-Z]{2})/)?.[1] || "--",
+                            bio: finalBio,
                             statusCanc: isCanc ? "SOLICITADO" : "PENDENTE",
                             checkId
                         };
@@ -1318,7 +1374,10 @@ app.get('/extract-vtme-auto', async (req, res) => {
                     if (closeBtn) closeBtn.click();
                     else document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}));
 
-                    await new Promise(r => setTimeout(r, 1200));
+                    for (let w = 0; w < 20; w++) {
+                        if (!document.querySelector('.cv-title, orb-icon-v3')) break;
+                        await new Promise(r => setTimeout(r, 100));
+                    }
 
                     if (info.cliente !== "Desconhecido") {
                         results.push(info);
@@ -1335,7 +1394,7 @@ app.get('/extract-vtme-auto', async (req, res) => {
                     console.log("⏭️ Indo para a próxima página...");
                     nextBtn.click();
                     pagesProcessed++;
-                    await new Promise(r => setTimeout(r, 4000)); // Espera a nova página carregar
+                    await new Promise(r => setTimeout(r, 2000)); // Espera a nova página carregar
                 } else {
                     console.log("🏁 Fim da paginação ou botão 'Próximo' não encontrado.");
                     break; 
@@ -1927,6 +1986,43 @@ app.get('/extract', async (req, res) => {
                 return "";
             })();
 
+            // Extração da Biometria / BIO
+            let bioVal = "";
+            try {
+                const xpathBio1 = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[3]/orb-card-v3/div/orb-card-row-v3[4]/div/div[2]/div/span[1]";
+                const xpathBio2 = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[3]/orb-card-v3/div/orb-card-row-v3[4]/div/div[2]/div/span[2]";
+                
+                let bioEl1 = getElementByXPath(xpathBio1);
+                let bioEl2 = getElementByXPath(xpathBio2);
+                
+                if (bioEl1 && bioEl2) {
+                    bioVal = `${bioEl1.innerText.trim()} - ${bioEl2.innerText.trim()}`;
+                } else if (bioEl1) {
+                    bioVal = bioEl1.innerText.trim();
+                } else if (bioEl2) {
+                    bioVal = bioEl2.innerText.trim();
+                }
+            } catch (e) {
+                console.error("Erro ao coletar Biometria pelo XPath:", e);
+            }
+
+            if (!bioVal) {
+                try {
+                    const rows = Array.from(document.querySelectorAll('orb-card-row-v3, .orb-card-row-v3'));
+                    for (const r of rows) {
+                        const labelEl = r.querySelector('.ocr-label, label, b, strong, div');
+                        if (labelEl && /biometria|status biometria|facial|bio/i.test(labelEl.innerText.trim())) {
+                            const valEl = r.querySelector('.ocr-value, span, div:nth-child(2)');
+                            if (valEl && valEl.innerText.trim()) {
+                                bioVal = valEl.innerText.trim();
+                                break;
+                            }
+                        }
+                    }
+                } catch (e) {}
+            }
+            const finalBio = (bioVal || "").trim() || "--";
+
             // Regra de validação CPF vs CNPJ
             let finalCPF = "";
             let finalCNPJ = "";
@@ -1952,6 +2048,7 @@ app.get('/extract', async (req, res) => {
                 valor_plano: data.valor_plano || "",
                 vencimento: data.data_vencimento || "",
                 uf: finalUF,
+                bio: finalBio,
                 consultora: data.consultor || "",
                 supervisor: data.supervisor || "",
                 protocolo: data.protocolo || "",
@@ -2014,7 +2111,12 @@ app.listen(PORT, async () => {
         let appPage = currentPages.find(p => p.url().includes('localhost:5173'));
         
         if (!appPage) {
-            appPage = await ctx.newPage();
+            const blankPage = currentPages.find(p => p.url() === 'about:blank' || p.url() === '');
+            if (blankPage) {
+                appPage = blankPage;
+            } else {
+                appPage = await ctx.newPage();
+            }
             console.log("🚀 Abrindo Interface do Sistema...");
             await appPage.goto('http://localhost:5173', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {
                 console.log("⚠️ Verifique se o Vite (npm run dev) está ativo.");

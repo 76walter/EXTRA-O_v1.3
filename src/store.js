@@ -83,6 +83,7 @@ export const useStore = create(
                     cliente: novoItem.cliente || 'NOME NÃO ENCONTRADO',
                     cpf: novoItem.cpf,
                     uf: novoItem.uf || '--',
+                    bio: novoItem.bio || '--',
                     consultor: novoItem.consultor || 'Consultor',
                     supervisor: novoItem.supervisor || 'Supervisor',
                     statusCanc: novoStatus
@@ -93,6 +94,9 @@ export const useStore = create(
                   if (currentLogs[logIndex].statusCanc !== novoStatus) {
                     if (novoStatus === '✅ SOLICITADO') novosCanc++;
                     currentLogs[logIndex] = { ...currentLogs[logIndex], statusCanc: novoStatus };
+                  }
+                  if (novoItem.bio && (!currentLogs[logIndex].bio || currentLogs[logIndex].bio === '--')) {
+                    currentLogs[logIndex] = { ...currentLogs[logIndex], bio: novoItem.bio };
                   }
                 }
               });

@@ -43,7 +43,12 @@ initDatabase().then(() => {
             let appPage = currentPages.find(p => p.url().includes('localhost:5173'));
             
             if (!appPage) {
-                appPage = await ctx.newPage();
+                const blankPage = currentPages.find(p => p.url() === 'about:blank' || p.url() === '');
+                if (blankPage) {
+                    appPage = blankPage;
+                } else {
+                    appPage = await ctx.newPage();
+                }
                 console.log("🚀 Abrindo Interface do Sistema...");
                 await appPage.goto('http://localhost:5173', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {
                     console.log("⚠️ Frontend não está rodando no 5173 ou demorou a responder.");

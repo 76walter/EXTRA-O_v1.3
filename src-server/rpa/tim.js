@@ -599,6 +599,7 @@ export class TimVendasRPA {
 
                     const freshCard = Array.from(document.querySelectorAll('page-detailed-view ion-list ion-item')).find(el => el.innerText.includes(ordem));
                     let dataInst = '--', statusInst = '--';
+                    let bio = '--', uf = '--', infraco = '--';
 
                     if (freshCard) {
                         freshCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -613,17 +614,23 @@ export class TimVendasRPA {
                                 if (!expanded) { attempts++; continue; }
 
                                 const lines = expanded.innerText.split('\n').map(t => t.trim());
-                                const findVal = (lbl) => {
-                                    const idx = lines.findIndex(t => t.includes(lbl));
-                                    if (idx !== -1) {
-                                        if (lines[idx].includes(':')) return lines[idx].split(':')[1].trim() || '--';
-                                        return lines[idx + 1] || '--';
+                                const findVal = (lbls) => {
+                                    if (!Array.isArray(lbls)) lbls = [lbls];
+                                    for (const lbl of lbls) {
+                                        const idx = lines.findIndex(t => t.toLowerCase().includes(lbl.toLowerCase()));
+                                        if (idx !== -1) {
+                                            if (lines[idx].includes(':')) return lines[idx].split(':')[1].trim() || '--';
+                                            return lines[idx + 1] || '--';
+                                        }
                                     }
                                     return '--';
                                 };
 
                                 dataInst = findVal('Data Agendada para Instalação');
                                 statusInst = findVal('Status da Instalação');
+                                bio = findVal(['Biometria', 'Status Biometria', 'Biometria Facial', 'BIO']);
+                                uf = findVal(['UF', 'Estado', 'Unidade Federativa']);
+                                infraco = findVal(['InfraCo', 'Parceiro de Infraestrutura', 'Rede', 'Tipo de Rede', 'Rede Neutra']);
 
                                 if (dataInst !== '--' && !dataInst.toLowerCase().includes('falha')) {
                                     chevron.click(); await delay(500); break;
@@ -634,7 +641,7 @@ export class TimVendasRPA {
                             }
                         }
                     }
-                    results.push({ nome, cpf, ordem, data: dataVenda, status: 'Em andamento', datainst: dataInst, statusinst: statusInst });
+                    results.push({ nome, cpf, ordem, data: dataVenda, status: 'Em andamento', datainst: dataInst, statusinst: statusInst, bio, uf, infraco });
                 }
                 return results;
             }, { alreadyProcessed: jaProcessados });

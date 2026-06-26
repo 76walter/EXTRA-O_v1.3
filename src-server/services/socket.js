@@ -69,7 +69,7 @@ async function runVTME() {
         console.error("VTME loop error", e.message);
     } finally {
         if (connectedClients > 0) {
-            vtmeLoopTimer = setTimeout(runVTME, 45000);
+            vtmeLoopTimer = setTimeout(runVTME, 15000);
         }
     }
 }

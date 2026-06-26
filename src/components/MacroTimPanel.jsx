@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Zap, ChevronLeft, ChevronRight, LogIn } from 'lucide-react';
 import { showToast } from './Toast';
 
-export default function MacroTimPanel({ extractedData, handleExtract, handleLaunchMacro, setStatus, onOpenTokenModal }) {
+export default function MacroTimPanel({ extractedData, logs, handleExtract, handleLaunchMacro, setStatus, onOpenTokenModal }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL'); // ALL, PENDING, LAUNCHED
   const [currentPage, setCurrentPage] = useState(1);
@@ -12,6 +12,49 @@ export default function MacroTimPanel({ extractedData, handleExtract, handleLaun
   const pending = Array.isArray(extractedData) ? extractedData.filter(i => !i.launched) : [];
   const pendingCount = pending.length;
   const launchedCount = totalCount - pendingCount;
+
+  // Helpers to resolve Consultor and UF from VTME logs
+  const getOrderConsultor = (order) => {
+    if (order.consultor && order.consultor !== '--' && order.consultor !== 'Não Identificado') {
+      return order.consultor;
+    }
+    const cleanOrderCpf = order.cpf ? order.cpf.replace(/\D/g, '') : '';
+    if (!cleanOrderCpf) return 'Não Identificado';
+    const matchingLog = logs && logs.find(l => {
+      const cleanLogCpf = l.cpf ? l.cpf.replace(/\D/g, '') : '';
+      return (cleanLogCpf && cleanLogCpf === cleanOrderCpf) || 
+             (l.cliente && order.nome && l.cliente.toLowerCase().trim() === order.nome.toLowerCase().trim());
+    });
+    return matchingLog ? (matchingLog.consultor || 'Não Identificado') : 'Não Identificado';
+  };
+
+  const getOrderUf = (order) => {
+    if (order.uf && order.uf !== '--') {
+      return order.uf;
+    }
+    const cleanOrderCpf = order.cpf ? order.cpf.replace(/\D/g, '') : '';
+    if (!cleanOrderCpf) return '--';
+    const matchingLog = logs && logs.find(l => {
+      const cleanLogCpf = l.cpf ? l.cpf.replace(/\D/g, '') : '';
+      return (cleanLogCpf && cleanLogCpf === cleanOrderCpf) || 
+             (l.cliente && order.nome && l.cliente.toLowerCase().trim() === order.nome.toLowerCase().trim());
+    });
+    return matchingLog ? (matchingLog.uf || '--') : '--';
+  };
+
+  const getOrderBio = (order) => {
+    if (order.bio && order.bio !== '--') {
+      return order.bio;
+    }
+    const cleanOrderCpf = order.cpf ? order.cpf.replace(/\D/g, '') : '';
+    if (!cleanOrderCpf) return '--';
+    const matchingLog = logs && logs.find(l => {
+      const cleanLogCpf = l.cpf ? l.cpf.replace(/\D/g, '') : '';
+      return (cleanLogCpf && cleanLogCpf === cleanOrderCpf) || 
+             (l.cliente && order.nome && l.cliente.toLowerCase().trim() === order.nome.toLowerCase().trim());
+    });
+    return matchingLog ? (matchingLog.bio || '--') : '--';
+  };
 
   // Filter orders
   const filteredOrders = (Array.isArray(extractedData) ? extractedData : []).filter(item => {
@@ -59,7 +102,13 @@ export default function MacroTimPanel({ extractedData, handleExtract, handleLaun
               setStatus({ text: '✅ Todos já foram lançados', active: true });
               return;
             }
-            await handleLaunchMacro(pending);
+            const enrichedPending = pending.map(order => ({
+              ...order,
+              bio: getOrderBio(order),
+              consultor: getOrderConsultor(order),
+              uf: getOrderUf(order)
+            }));
+            await handleLaunchMacro(enrichedPending);
           }}>
             Lançar na Planilha Macro
           </button>
@@ -121,6 +170,18 @@ export default function MacroTimPanel({ extractedData, handleExtract, handleLaun
                   <div style={{ padding: '12px', resize: 'horizontal', overflow: 'hidden', minWidth: '180px', color: '#94A3B8', textAlign: 'left', display: 'inline-block', width: '100%' }}>ORDEM DE VENDA</div>
                 </th>
                 <th style={{ padding: 0, borderBottom: '2px solid #334155', borderRight: '1px solid #334155' }}>
+                  <div style={{ padding: '12px', resize: 'horizontal', overflow: 'hidden', minWidth: '100px', color: '#94A3B8', textAlign: 'left', display: 'inline-block', width: '100%' }}>BIO</div>
+                </th>
+                <th style={{ padding: 0, borderBottom: '2px solid #334155', borderRight: '1px solid #334155' }}>
+                  <div style={{ padding: '12px', resize: 'horizontal', overflow: 'hidden', minWidth: '150px', color: '#94A3B8', textAlign: 'left', display: 'inline-block', width: '100%' }}>CONSULTOR</div>
+                </th>
+                <th style={{ padding: 0, borderBottom: '2px solid #334155', borderRight: '1px solid #334155' }}>
+                  <div style={{ padding: '12px', resize: 'horizontal', overflow: 'hidden', minWidth: '80px', color: '#94A3B8', textAlign: 'left', display: 'inline-block', width: '100%' }}>UF</div>
+                </th>
+                <th style={{ padding: 0, borderBottom: '2px solid #334155', borderRight: '1px solid #334155' }}>
+                  <div style={{ padding: '12px', resize: 'horizontal', overflow: 'hidden', minWidth: '120px', color: '#94A3B8', textAlign: 'left', display: 'inline-block', width: '100%' }}>InfraCo</div>
+                </th>
+                <th style={{ padding: 0, borderBottom: '2px solid #334155', borderRight: '1px solid #334155' }}>
                   <div style={{ padding: '12px', resize: 'horizontal', overflow: 'hidden', minWidth: '130px', color: '#94A3B8', textAlign: 'left', display: 'inline-block', width: '100%' }}>DATA VENDA</div>
                 </th>
                 <th style={{ padding: 0, borderBottom: '2px solid #334155', borderRight: '1px solid #334155' }}>
@@ -142,6 +203,10 @@ export default function MacroTimPanel({ extractedData, handleExtract, handleLaun
                   </td>
                   <td style={{ padding: '12px', color: '#CBD5E1', borderRight: '1px solid #334155' }}>{order.cpf}</td>
                   <td style={{ padding: '12px', color: '#CBD5E1', borderRight: '1px solid #334155' }}>{order.ordem}</td>
+                  <td style={{ padding: '12px', color: '#CBD5E1', borderRight: '1px solid #334155' }}>{getOrderBio(order)}</td>
+                  <td style={{ padding: '12px', color: '#CBD5E1', borderRight: '1px solid #334155', fontWeight: '500' }}>{getOrderConsultor(order)}</td>
+                  <td style={{ padding: '12px', color: '#CBD5E1', borderRight: '1px solid #334155' }}>{getOrderUf(order)}</td>
+                  <td style={{ padding: '12px', color: '#CBD5E1', borderRight: '1px solid #334155' }}>{order.infraco || '--'}</td>
                   <td style={{ padding: '12px', color: '#CBD5E1', borderRight: '1px solid #334155' }}>{order.data}</td>
                   <td style={{ padding: '12px', borderRight: '1px solid #334155' }}>
                     <span style={{
@@ -153,7 +218,7 @@ export default function MacroTimPanel({ extractedData, handleExtract, handleLaun
                        fontWeight: 'bold',
                        border: '1px solid #1E40AF'
                     }}>
-                      {order.status}
+                       {order.status}
                     </span>
                   </td>
                   <td style={{ padding: '12px', color: '#10B981', fontWeight: 'bold', borderRight: '1px solid #334155' }}>{order.datainst}</td>
@@ -161,7 +226,7 @@ export default function MacroTimPanel({ extractedData, handleExtract, handleLaun
                 </tr>
               )) : (
                 <tr>
-                  <td colSpan="7" style={{ padding: '40px', textAlign: 'center', color: '#94A3B8' }}>
+                  <td colSpan="11" style={{ padding: '40px', textAlign: 'center', color: '#94A3B8' }}>
                     {totalCount === 0 ? 'Nenhum pedido "Em andamento" detectado. Aguardando atualização...' : 'Nenhum pedido corresponde à busca/filtro.'}
                   </td>
                 </tr>
