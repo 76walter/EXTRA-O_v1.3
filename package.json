@@ -3,10 +3,13 @@
   "private": true,
   "version": "6.0.0",
   "type": "module",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "concurrently \"vite\" \"node src-server/server.js\"",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "electron:dev": "electron .",
+    "build:exe": "npm run build && electron-builder --win"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -34,6 +37,33 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "concurrently": "^10.0.3",
-    "vite": "^5.4.2"
+    "electron": "^42.5.1",
+    "electron-builder": "^26.15.3",
+    "electron-is-dev": "^3.0.1",
+    "vite": "^5.4.2",
+    "wait-on": "^9.0.10"
+  },
+  "build": {
+    "appId": "com.extracao.vtme",
+    "productName": "Extrator VTME",
+    "directories": {
+      "output": "C:/Extrator_Release"
+    },
+    "files": [
+      "dist/**/*",
+      "src-server/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": ["nsis"]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   }
 }

@@ -1157,7 +1157,7 @@ app.get('/send-whatsapp', async (req, res) => {
 
 // Conjunto para memorizar os contratos já processados
 // Vamos limpar isso a cada 5 minutos para o robô re-checar status de cancelamento
-let processedVTMEOrders = new Set();
+let processedVTMEOrders = new Map(); // checkId -> attemptCount
 setInterval(() => {
     console.log("♻️ Limpando cache de pedidos processados para re-atualização...");
     processedVTMEOrders.clear();
@@ -1226,9 +1226,24 @@ app.get('/extract-vtme-auto', async (req, res) => {
             }
         });
         await page.waitForTimeout(2000);
+        const isActiveTimFibra = await page.evaluate(() => {
+            const activeTabEl = Array.from(document.querySelectorAll('.tabResponsiva li.active a, md-tab-item.md-active, .nav-link.active, .nav-tabs .active, .nav-tabs li.active a'))
+                                     .find(el => el.innerText && el.innerText.toLowerCase().includes('tim fibra'));
+            return !!activeTabEl;
+        });
 
-        const jaProcessados = Array.from(processedVTMEOrders);
-        console.log(`🔍 Iniciando varredura profunda. Já processados hoje: ${jaProcessados.length}`);
+        if (!isActiveTimFibra) {
+            console.log("⏸️ [VTME RPA] Aba 'Tim Fibra' não está ativa. Pulando extração automática para evitar misturar com corporativo/móvel.");
+            return res.json({ success: true, data: [] });
+        }
+
+        const jaProcessados = [];
+        for (const [checkId, attempts] of processedVTMEOrders.entries()) {
+            if (attempts >= 3) {
+                jaProcessados.push(checkId);
+            }
+        }
+        console.log(`🔍 Iniciando varredura profunda. Já processados hoje (com 3+ tentativas): ${jaProcessados.length}`);
 
         const extractedThisRound = await page.evaluate(async (alreadyProcessed) => {
             const results = [];
@@ -1272,11 +1287,29 @@ app.get('/extract-vtme-auto', async (req, res) => {
 
                     console.log("🤖 Abrindo contrato: " + checkId);
                     btnTarget.click();
-                    await new Promise(r => setTimeout(r, 2500));
+                    
+                    // Espera o modal abrir e carregar os dados (focando apenas no modal VISÍVEL e ATIVO)
+                    await new Promise(async (resolve) => {
+                        const startTime = Date.now();
+                        while (Date.now() - startTime < 8000) {
+                            const activeModal = Array.from(document.querySelectorAll('pedido-tim-fibra-modal, pedido-modal, orb-modal-v3, .modal-content'))
+                                                     .find(el => el.offsetWidth > 0 && el.offsetHeight > 0);
+                            if (activeModal) {
+                                const hasDetails = activeModal.querySelector('orb-card-row-v3');
+                                if (hasDetails) {
+                                    break;
+                                }
+                            }
+                            await new Promise(r => setTimeout(r, 300));
+                        }
+                        resolve();
+                    });
 
                     const extractInfo = () => {
                         const getVal = (labelStr) => {
-                            const elements = Array.from(document.querySelectorAll('label, b, strong, span, th, td'));
+                            const modalEl = Array.from(document.querySelectorAll('pedido-tim-fibra-modal, pedido-modal, orb-modal-v3, .modal-content'))
+                                                 .find(el => el.offsetWidth > 0 && el.offsetHeight > 0) || document;
+                            const elements = Array.from(modalEl.querySelectorAll('label, b, strong, span, th, td'));
                             const target = elements.find(el => {
                                 const txt = (el.innerText || "").trim().replace(':','').toLowerCase();
                                 return txt === labelStr.toLowerCase();
@@ -1297,10 +1330,28 @@ app.get('/extract-vtme-auto', async (req, res) => {
                         const rawCpf = getVal('CPF') || checkId;
                         const cliente = rawCliente.toLowerCase() === 'cliente' ? 'Desconhecido' : rawCliente;
                         const cpf = rawCpf.toLowerCase() === 'cpf' ? checkId : rawCpf;
-                        const consultor = (getVal('Consultor') || "Consultor").split('-')[0].trim();
-                        const supervisor = (getVal('Supervisor') || "Supervisor").split('-')[0].trim();
+                        const rawConsultor = getVal('Consultor') || getVal('Consultor(a)') || getVal('Vendedor') || "Consultor";
+                        const consultor = rawConsultor.split('-')[0].trim();
+                        
+                        const rawSupervisor = getVal('Supervisor') || getVal('Supervisor(a)') || getVal('Lider') || "Supervisor";
+                        const supervisor = rawSupervisor.split('-')[0].trim();
+                        
                         const textContent = document.body.innerText.toLowerCase();
                         const isCanc = textContent.includes("cancelamento operação") || textContent.includes("cancelamento operacao");
+                        
+                        let bio = getVal('Biometria') || getVal('Bio');
+                        if (!bio) {
+                            const xpathBio1 = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[3]/orb-card-v3/div/orb-card-row-v3[4]/div/div[2]/div/span[1]";
+                            const xpathBio2 = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[3]/orb-card-v3/div/orb-card-row-v3[4]/div/div[2]/div";
+                            const bioEl = getElementByXPath(xpathBio1) || getElementByXPath(xpathBio2);
+                            if (bioEl) {
+                                let bioVal = bioEl.innerText.trim();
+                                if (bioVal.toUpperCase().includes('BIOMETRIA')) {
+                                    bioVal = bioVal.replace(/Biometria:/i, '').trim();
+                                }
+                                bio = bioVal;
+                            }
+                        }
                         
                         return { 
                             cliente, cpf, 
@@ -1308,6 +1359,7 @@ app.get('/extract-vtme-auto', async (req, res) => {
                             supervisor: supervisor === 'Supervisor' ? 'Não Identificado' : supervisor,
                             uf: document.body.innerText.match(/\/\s*([A-Z]{2})/)?.[1] || "--",
                             statusCanc: isCanc ? "SOLICITADO" : "PENDENTE",
+                            bio: bio || '--',
                             checkId
                         };
                     };
@@ -1348,7 +1400,13 @@ app.get('/extract-vtme-auto', async (req, res) => {
         // Atualiza a memória de Set no backend Node
         for (const item of extractedThisRound) {
             if (item.checkId) {
-                processedVTMEOrders.add(item.checkId);
+                const isFullyExtracted = item.consultor && item.consultor !== 'Não Identificado' && item.bio && item.bio !== '--';
+                const currentAttempts = processedVTMEOrders.get(item.checkId) || 0;
+                if (isFullyExtracted) {
+                    processedVTMEOrders.set(item.checkId, 99); // Sucesso total, pula sempre
+                } else {
+                    processedVTMEOrders.set(item.checkId, currentAttempts + 1); // Incrementa tentativa
+                }
             }
         }
 
@@ -1959,7 +2017,8 @@ app.get('/extract', async (req, res) => {
                 cnpj_nome_rep: data.cnpj_nome_rep || "",
                 cnpj_cpf_rep: data.cnpj_cpf_rep || "",
                 cnpj_email_rep: data.cnpj_email_rep || "",
-                cnpj_nasc_rep: data.cnpj_nasc_rep || ""
+                cnpj_nasc_rep: data.cnpj_nasc_rep || "",
+                bio: data.bio || "--"
             };
         });
 

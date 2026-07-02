@@ -2,7 +2,7 @@ import { initHeadedBrowser, autoLogin, setExtracting, isExtracting } from '../br
 import { loadSettings } from '../utils/storage.js';
 
 let vtmeExtractionTimeout;
-const processedVTMEOrders = new Set();
+const processedVTMEOrders = new Map(); // checkId -> attemptCount
 
 export class VTMERoboticAutomation {
     async getVTMEPage() {
@@ -84,13 +84,36 @@ export class VTMERoboticAutomation {
             });
             await page.waitForTimeout(2000);
 
-            const jaProcessados = Array.from(processedVTMEOrders);
-            console.log(`🔍 Iniciando varredura profunda. Já processados hoje: ${jaProcessados.length}`);
+            const isActiveTimFibra = await page.evaluate(() => {
+                const activeTabEl = Array.from(document.querySelectorAll('.tabResponsiva li.active a, md-tab-item.md-active, .nav-link.active, .nav-tabs .active, .nav-tabs li.active a'))
+                                         .find(el => el.innerText && el.innerText.toLowerCase().includes('tim fibra'));
+                return !!activeTabEl;
+            });
+
+            if (!isActiveTimFibra) {
+                console.log("⏸️ [VTME RPA] Aba 'Tim Fibra' não está ativa. Pulando extração automática para evitar misturar com corporativo/móvel.");
+                return { success: true, data: [] };
+            }
+
+            const jaProcessados = [];
+            for (const [checkId, attempts] of processedVTMEOrders.entries()) {
+                if (attempts >= 3) {
+                    jaProcessados.push(checkId);
+                }
+            }
+            console.log(`🔍 Iniciando varredura profunda. Já processados hoje (com 3+ tentativas): ${jaProcessados.length}`);
 
             const extractedThisRound = await page.evaluate(async (alreadyProcessed) => {
+                const getElementByXPath = (path) => {
+                    try {
+                        return document.evaluate(path, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                    } catch (e) {
+                        return null;
+                    }
+                };
                 const results = [];
                 let pagesProcessed = 0;
-                const maxPages = 500; // Aumentado limite de páginas para extrair todos os registros
+                const maxPages = 20; // Limite de 20 páginas (últimos 1000 pedidos)
 
                 while (pagesProcessed < maxPages) {
                     const getRows = () => Array.from(document.querySelectorAll('table[orb-relatorio-table] tbody tr, table.orb-gr2-table tbody tr, .ui-grid-row'));
@@ -129,7 +152,23 @@ export class VTMERoboticAutomation {
 
                         console.log("🤖 Abrindo contrato: " + checkId);
                         btnTarget.click();
-                        await new Promise(r => setTimeout(r, 2500));
+                        
+                        // Espera o modal abrir e carregar os dados (focando apenas no modal VISÍVEL e ATIVO)
+                        await new Promise(async (resolve) => {
+                            const startTime = Date.now();
+                            while (Date.now() - startTime < 8000) {
+                                const activeModal = Array.from(document.querySelectorAll('pedido-tim-fibra-modal, pedido-modal, orb-modal-v3, .modal-content'))
+                                                         .find(el => el.offsetWidth > 0 && el.offsetHeight > 0);
+                                if (activeModal) {
+                                    const hasDetails = activeModal.querySelector('orb-card-row-v3');
+                                    if (hasDetails) {
+                                        break;
+                                    }
+                                }
+                                await new Promise(r => setTimeout(r, 300));
+                            }
+                            resolve();
+                        });
 
                         const extractInfo = () => {
                             let cliente = "Desconhecido";
@@ -159,51 +198,124 @@ export class VTMERoboticAutomation {
                                 }
                             }
 
-                            const getVal = (labelStr) => {
-                                const elements = Array.from(document.querySelectorAll('label, b, strong, span, th, td'));
-                                const target = elements.find(el => {
-                                    const txt = (el.innerText || "").trim().replace(':','').toLowerCase();
-                                    return txt === labelStr.toLowerCase();
-                                });
-                                if (!target) return "";
-                                let valEl = target.nextElementSibling;
-                                if (valEl && (valEl.innerText.trim() || valEl.value)) return (valEl.value || valEl.innerText).trim();
-                                const parentTxt = (target.parentElement.innerText || "").replace(target.innerText, "").trim();
-                                if (parentTxt.length > 2) return parentTxt;
-                                if (target.tagName === 'TD' || target.parentElement.tagName === 'TD') {
-                                    const td = target.closest('td');
-                                    if (td && td.nextElementSibling) return td.nextElementSibling.innerText.trim();
-                                }
-                                return "";
-                            };
+                             const getVal = (labelStr) => {
+                                 const modalEl = Array.from(document.querySelectorAll('pedido-tim-fibra-modal, pedido-modal, orb-modal-v3, .modal-content'))
+                                                      .find(el => el.offsetWidth > 0 && el.offsetHeight > 0) || document;
+                                 const elements = Array.from(modalEl.querySelectorAll('label, b, strong, span, th, td'));
+                                 const targets = elements.filter(el => {
+                                     const txt = (el.innerText || "").trim().replace(':','').toLowerCase();
+                                     return txt === labelStr.toLowerCase();
+                                 });
+                                 
+                                 for (const target of targets) {
+                                     let valEl = target.nextElementSibling;
+                                     if (valEl && (valEl.innerText.trim() || valEl.value)) return (valEl.value || valEl.innerText).trim();
+                                     
+                                     const parentTxt = (target.parentElement.innerText || "").replace(target.innerText, "").trim();
+                                     if (parentTxt.length > 2) return parentTxt;
+                                     
+                                     if (target.tagName === 'TD' || target.parentElement.tagName === 'TD') {
+                                         const td = target.closest('td');
+                                         if (td && td.nextElementSibling && td.nextElementSibling.innerText.trim()) {
+                                             return td.nextElementSibling.innerText.trim();
+                                         }
+                                     }
+                                 }
+                                 return "";
+                             };
 
-                            if (cliente === "Desconhecido" || cliente === "") {
-                                const rawCliente = getVal('Cliente') || getVal('Nome') || "Desconhecido";
-                                cliente = rawCliente.toLowerCase() === 'cliente' ? 'Desconhecido' : rawCliente;
-                            }
+                             if (cliente === "Desconhecido" || cliente === "") {
+                                 const rawCliente = getVal('Cliente') || getVal('Nome') || "Desconhecido";
+                                 cliente = rawCliente.toLowerCase() === 'cliente' ? 'Desconhecido' : rawCliente;
+                             }
 
-                            if (cpf === checkId) {
-                                const rawCpf = getVal('CPF') || checkId;
-                                cpf = rawCpf.toLowerCase() === 'cpf' ? checkId : rawCpf;
-                            }
+                             if (cpf === checkId) {
+                                 const rawCpf = getVal('CPF') || checkId;
+                                 cpf = rawCpf.toLowerCase() === 'cpf' ? checkId : rawCpf;
+                             }
 
-                            if (uf === "--") {
-                                uf = document.body.innerText.match(/\/\s*([A-Z]{2})/)?.[1] || "--";
-                            }
+                             if (uf === "--") {
+                                 uf = document.body.innerText.match(/\/\s*([A-Z]{2})/)?.[1] || "--";
+                             }
 
-                            const consultor = (getVal('Consultor') || "Consultor").split('-')[0].trim();
-                            const supervisor = (getVal('Supervisor') || "Supervisor").split('-')[0].trim();
-                            const textContent = document.body.innerText.toLowerCase();
-                            const isCanc = textContent.includes("cancelamento operação") || textContent.includes("cancelamento operacao");
-                            
-                            return { 
-                                cliente, cpf, 
-                                consultor: consultor === 'Consultor' ? 'Não Identificado' : consultor,
-                                supervisor: supervisor === 'Supervisor' ? 'Não Identificado' : supervisor,
-                                uf,
-                                statusCanc: isCanc ? "SOLICITADO" : "PENDENTE",
-                                checkId
-                            };
+                             const textContent = document.body.innerText.toLowerCase();
+                             const isCanc = textContent.includes("cancelamento operação") || textContent.includes("cancelamento operacao");
+                             
+                             const extractWithFallback = (keywords) => {
+                                 const modalEl = Array.from(document.querySelectorAll('pedido-tim-fibra-modal, pedido-modal, orb-modal-v3, .modal-content'))
+                                                      .find(el => el.offsetWidth > 0 && el.offsetHeight > 0) || document;
+                                 for (const k of keywords) {
+                                     let val = getVal(k);
+                                     if (val) return val;
+                                 }
+                                 const allElements = Array.from(modalEl.querySelectorAll('*'));
+                                 for (const k of keywords) {
+                                     const labelEl = allElements.find(el => el.children.length === 0 && (el.innerText || '').trim().toLowerCase().includes(k.toLowerCase()));
+                                     if (labelEl) {
+                                         let current = labelEl;
+                                         while (current && current !== modalEl) {
+                                             let next = current.nextElementSibling;
+                                             if (next && next.innerText && next.innerText.trim() !== '') {
+                                                 return next.innerText.trim();
+                                             }
+                                             current = current.parentElement;
+                                         }
+                                     }
+                                 }
+                                 return "";
+                             };
+
+                             const rawConsultor = extractWithFallback(['Consultor', 'Consultor(a)', 'Vendedor']) || "Consultor";
+                             const consultor = rawConsultor.replace('·', '-').split('-')[0].trim();
+                             
+                             const rawSupervisor = extractWithFallback(['Supervisor', 'Supervisor(a)', 'Lider']) || "Supervisor";
+                             const supervisor = rawSupervisor.replace('·', '-').split('-')[0].trim();
+
+                             
+                             let bio = getVal('Biometria') || getVal('Bio');
+                             if (!bio) {
+                                 // Fallback 1: Buscar elemento que contenha texto Biometria e pegar o próximo elemento com texto
+                                 const modalEl = Array.from(document.querySelectorAll('pedido-tim-fibra-modal, pedido-modal, orb-modal-v3, .modal-content'))
+                                                      .find(el => el.offsetWidth > 0 && el.offsetHeight > 0) || document;
+                                 const allElements = Array.from(modalEl.querySelectorAll('*'));
+                                 const labelEl = allElements.find(el => el.children.length === 0 && (el.innerText || '').trim().toLowerCase().includes('biometria'));
+                                 if (labelEl) {
+                                     // Procura o próximo elemento com texto (pode ser irmão ou estar num contêiner vizinho)
+                                     let current = labelEl;
+                                     while (current && current !== modalEl) {
+                                         let next = current.nextElementSibling;
+                                         if (next && next.innerText && next.innerText.trim() !== '') {
+                                             bio = next.innerText.trim();
+                                             break;
+                                         }
+                                         current = current.parentElement;
+                                     }
+                                 }
+                             }
+                             
+                             if (!bio) {
+                                 // Fallback 2: XPath absoluto
+                                 const xpathBio1 = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[3]/orb-card-v3/div/orb-card-row-v3[4]/div/div[2]/div/span[1]";
+                                 const xpathBio2 = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[3]/orb-card-v3/div/orb-card-row-v3[4]/div/div[2]/div";
+                                 const bioEl = getElementByXPath(xpathBio1) || getElementByXPath(xpathBio2);
+                                 if (bioEl) {
+                                     bio = bioEl.innerText.trim();
+                                 }
+                             }
+                             
+                             if (bio && bio.toUpperCase().includes('BIOMETRIA')) {
+                                 bio = bio.replace(/Biometria:/i, '').replace(/Biometria/i, '').trim();
+                             }
+                             
+                             return { 
+                                 cliente, cpf, 
+                                 consultor: consultor === 'Consultor' ? 'Não Identificado' : consultor,
+                                 supervisor: supervisor === 'Supervisor' ? 'Não Identificado' : supervisor,
+                                 uf,
+                                 statusCanc: isCanc ? "SOLICITADO" : "PENDENTE",
+                                 bio: bio || '--',
+                                 checkId
+                             };
                         };
 
                         const info = extractInfo();
@@ -224,6 +336,11 @@ export class VTMERoboticAutomation {
                     const paginationBtns = Array.from(document.querySelectorAll('.pagination li a, .pagination button, .pager a'));
                     const nextBtn = paginationBtns.find(b => b.innerText.trim() === '>' || b.innerText.includes('Próximo') || b.getAttribute('aria-label') === 'Next');
                     
+                    if (pagesProcessed > 0 && processedInThisPage === 0) {
+                        console.log("🏁 Nenhum pedido novo na página atual. Varredura VTME concluída.");
+                        break;
+                    }
+
                     if (nextBtn && !nextBtn.parentElement.classList.contains('disabled') && !nextBtn.hasAttribute('disabled')) {
                         console.log("⏭️ Indo para a próxima página...");
                         nextBtn.click();
@@ -237,9 +354,17 @@ export class VTMERoboticAutomation {
                 return results;
             }, jaProcessados);
 
-            for (const item of extractedThisRound) {
-                if (item.checkId) processedVTMEOrders.add(item.checkId);
-            }
+             for (const item of extractedThisRound) {
+                 if (item.checkId) {
+                     const isFullyExtracted = item.consultor && item.consultor !== 'Não Identificado' && item.bio && item.bio !== '--';
+                     const currentAttempts = processedVTMEOrders.get(item.checkId) || 0;
+                     if (isFullyExtracted) {
+                         processedVTMEOrders.set(item.checkId, 99); // Sucesso total, pula sempre
+                     } else {
+                         processedVTMEOrders.set(item.checkId, currentAttempts + 1); // Incrementa tentativa
+                     }
+                 }
+             }
 
             if (extractedThisRound.length > 0) {
                 console.log(`✅ Sucesso! ${extractedThisRound.length} novos registros processados.`);
@@ -393,6 +518,25 @@ export class VTMERoboticAutomation {
                 } catch (e) {
                     console.error("Erro ao coletar Consultor pelo XPath informado:", e);
                 }
+
+                // 2.3 EXTRAÇÃO DIRECIONADA DA BIOMETRIA
+                try {
+                    const xpathBioFibra = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[3]/orb-card-v3/div/orb-card-row-v3[4]/div/div[2]/div/span[1]";
+                    let bioEl = getElementByXPath(xpathBioFibra);
+                    if (bioEl) {
+                        data.bio = bioEl.innerText.trim();
+                    } else {
+                        // Fallback usando a tag strong
+                        const allStrongs = Array.from(document.querySelectorAll('strong'));
+                        const bioStrong = allStrongs.find(el => el.innerText.toLowerCase().includes('biometria'));
+                        if (bioStrong && bioStrong.nextElementSibling) {
+                            data.bio = bioStrong.nextElementSibling.innerText.trim();
+                        }
+                    }
+                } catch (e) {
+                    console.error("Erro ao coletar Biometria:", e);
+                }
+
 
                 try {
                     const xpathSupervisor = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[8]/orb-card-v3/div/orb-card-row-v3[2]/div/div[2]/div/span";
@@ -631,6 +775,24 @@ export class VTMERoboticAutomation {
                     console.error("Erro ao extrair o Nome Fantasia:", e);
                 }
 
+                // EXTRAÇÃO DO CAMPO BIO
+                try {
+                    const xpathBioFornecido1 = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[3]/orb-card-v3/div/orb-card-row-v3[4]/div/div[2]/div/span[1]";
+                    const xpathBioFornecido2 = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[3]/orb-card-v3/div/orb-card-row-v3[4]/div/div[2]/div";
+                    let bioEl = getElementByXPath(xpathBioFornecido1) || getElementByXPath(xpathBioFornecido2);
+                    if (bioEl) {
+                        let bioVal = bioEl.innerText.trim();
+                        if (bioVal.toUpperCase().includes('BIOMETRIA')) {
+                            bioVal = bioVal.replace(/Biometria:/i, '').trim();
+                        }
+                        if (bioVal) {
+                            data.bio = bioVal;
+                        }
+                    }
+                } catch (e) {
+                    console.error("Erro ao extrair o campo BIO:", e);
+                }
+
                 // 7. EXTRAÇÃO AUXILIAR CASO OS CAMPOS SE VALIDEM EM DEMAIS ABAS
                 try {
                     const clienteCard = document.querySelector("cliente-card-v3");
@@ -721,10 +883,45 @@ export class VTMERoboticAutomation {
                             }
                             if ((labelText === 'CONSULTOR' || labelText === 'CONSULTOR(A)' || labelText === 'VENDEDOR') && !data.consultor) data.consultor = value;
                             if ((labelText === 'SUPERVISOR' || labelText === 'SUPERVISOR(A)' || labelText === 'LIDER') && !data.supervisor) data.supervisor = value;
+                            if (labelText === 'BIOMETRIA' && !data.bio) data.bio = value;
                         });
                     });
                 } catch(e) {}
 
+                // 10. REPESCAGEM FINAL (MÉTODO AGRESSIVO) PARA CAMPOS VAZIOS
+                const getValManual = (labelStr) => {
+                    const elements = Array.from(document.querySelectorAll('label, b, strong, span, th, td'));
+                    const target = elements.find(el => {
+                        const txt = (el.innerText || "").trim().replace(':','').toLowerCase();
+                        return txt === labelStr.toLowerCase();
+                    });
+                    if (!target) return "";
+                    let valEl = target.nextElementSibling;
+                    if (valEl && (valEl.innerText.trim() || valEl.value)) return (valEl.value || valEl.innerText).trim();
+                    const parentTxt = (target.parentElement.innerText || "").replace(target.innerText, "").trim();
+                    if (parentTxt.length > 2) return parentTxt;
+                    if (target.tagName === 'TD' || target.parentElement.tagName === 'TD') {
+                        const td = target.closest('td');
+                        if (td && td.nextElementSibling) return td.nextElementSibling.innerText.trim();
+                    }
+                    return "";
+                };
+
+                if (!data.consultor) {
+                    data.consultor = getValManual('Consultor') || getValManual('Consultor(a)') || getValManual('Vendedor');
+                }
+                if (!data.supervisor) {
+                    data.supervisor = getValManual('Supervisor') || getValManual('Supervisor(a)') || getValManual('Lider');
+                }
+                if (!data.bio) {
+                    data.bio = getValManual('Biometria') || getValManual('Bio');
+                }
+                
+                // Força limpeza do BIO caso ainda pegue a string completa
+                if (data.bio && typeof data.bio === 'string' && data.bio.toUpperCase().includes('BIOMETRIA')) {
+                    data.bio = data.bio.replace(/Biometria:/i, '').trim();
+                }
+                
                 const divs = document.querySelectorAll('.ng-binding');
                 divs.forEach(div => {
                     const label = div.querySelector('label') || div.querySelector('b');
@@ -873,7 +1070,8 @@ export class VTMERoboticAutomation {
                     uf: finalUF,
                     consultora: data.consultor || "",
                     supervisor: data.supervisor || "",
-                    protocolo: data.protocolo || ""
+                    protocolo: data.protocolo || "",
+                    bio: data.bio || "--"
                 };
             });
 

@@ -328,19 +328,43 @@ export class TimVendasRPA {
         // Clicar em "Pedidos Cadastrados" no menu
         const btnPedidos = this.page.locator('ion-menu ion-item, ion-menu ion-label').filter({ hasText: /Pedidos Cadastrados/i }).first();
         if (await btnPedidos.isVisible({ timeout: 5000 }).catch(() => false)) {
-            await btnPedidos.click();
-            console.log("✅ [TIM RPA] Clicou em 'Pedidos Cadastrados'");
-            await this.page.waitForTimeout(2000);
-            return true;
+            try {
+                await btnPedidos.click({ timeout: 5000 });
+                console.log("✅ [TIM RPA] Clicou em 'Pedidos Cadastrados'");
+                await this.page.waitForTimeout(2000);
+                return true;
+            } catch (clickErr) {
+                console.warn(`⚠️ [TIM RPA] Clique normal em 'Pedidos Cadastrados' falhou: ${clickErr.message.split('\n')[0]}`);
+                try {
+                    await btnPedidos.click({ force: true, timeout: 5000 });
+                    console.log("✅ [TIM RPA] Clicou em 'Pedidos Cadastrados' via force click");
+                    await this.page.waitForTimeout(2000);
+                    return true;
+                } catch (forceErr) {
+                    console.error(`❌ [TIM RPA] Force click em 'Pedidos Cadastrados' também falhou: ${forceErr.message.split('\n')[0]}`);
+                }
+            }
         }
         
         // Fallback: tenta via texto genérico 
         const fallbackBtn = this.page.locator('text=/Pedidos Cadastrados/i').first();
         if (await fallbackBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-            await fallbackBtn.click();
-            console.log("✅ [TIM RPA] Clicou em 'Pedidos Cadastrados' (fallback)");
-            await this.page.waitForTimeout(2000);
-            return true;
+            try {
+                await fallbackBtn.click({ timeout: 5000 });
+                console.log("✅ [TIM RPA] Clicou em 'Pedidos Cadastrados' (fallback)");
+                await this.page.waitForTimeout(2000);
+                return true;
+            } catch (clickErr) {
+                console.warn(`⚠️ [TIM RPA] Clique normal no fallback falhou: ${clickErr.message.split('\n')[0]}`);
+                try {
+                    await fallbackBtn.click({ force: true, timeout: 5000 });
+                    console.log("✅ [TIM RPA] Clicou em 'Pedidos Cadastrados' (fallback via force click)");
+                    await this.page.waitForTimeout(2000);
+                    return true;
+                } catch (forceErr) {
+                    console.error(`❌ [TIM RPA] Force click no fallback também falhou: ${forceErr.message.split('\n')[0]}`);
+                }
+            }
         }
 
         console.warn("⚠️ [TIM RPA] 'Pedidos Cadastrados' não encontrado no menu!");
@@ -598,7 +622,7 @@ export class TimVendasRPA {
                     const dataVenda = rows[0]?.querySelector('ion-col[text-right]')?.innerText.trim() || '--';
 
                     const freshCard = Array.from(document.querySelectorAll('page-detailed-view ion-list ion-item')).find(el => el.innerText.includes(ordem));
-                    let dataInst = '--', statusInst = '--';
+                    let dataInst = '--', statusInst = '--', infraco = '--', plano = '--', valorPlano = '--', uf = '--';
 
                     if (freshCard) {
                         freshCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -612,18 +636,51 @@ export class TimVendasRPA {
                                 const expanded = Array.from(document.querySelectorAll('page-detailed-view ion-list ion-item')).find(el => el.innerText.includes(ordem));
                                 if (!expanded) { attempts++; continue; }
 
-                                const lines = expanded.innerText.split('\n').map(t => t.trim());
+                                const lines = expanded.innerText.split('\n').map(t => t.trim()).filter(t => t.length > 0);
                                 const findVal = (lbl) => {
-                                    const idx = lines.findIndex(t => t.includes(lbl));
+                                    const lowerLbl = lbl.toLowerCase().trim();
+                                    const lowerLblNoSpace = lowerLbl.replace(/\s/g, '');
+                                    
+                                    // Tenta correspondência exata primeiro
+                                    let idx = lines.findIndex(t => {
+                                        const clean = t.toLowerCase().replace(/[:\s]+/g, '').trim();
+                                        return clean === lowerLblNoSpace;
+                                    });
+                                    
+                                    // Se não achou exato, tenta correspondência parcial
+                                    if (idx === -1) {
+                                        idx = lines.findIndex(t => t.toLowerCase().replace(/\s/g, '').includes(lowerLblNoSpace));
+                                    }
+                                    
                                     if (idx !== -1) {
-                                        if (lines[idx].includes(':')) return lines[idx].split(':')[1].trim() || '--';
-                                        return lines[idx + 1] || '--';
+                                        const line = lines[idx];
+                                        if (line.includes(':')) {
+                                            const parts = line.split(':');
+                                            return parts.slice(1).join(':').replace(/^[:\s]+/, '').trim() || '--';
+                                        }
+                                        const nextLine = lines[idx + 1] || '';
+                                        return nextLine.replace(/^[:\s]+/, '').trim() || '--';
                                     }
                                     return '--';
                                 };
 
                                 dataInst = findVal('Data Agendada para Instalação');
                                 statusInst = findVal('Status da Instalação');
+                                infraco = findVal('InfraCo');
+                                if (infraco === '--') {
+                                    infraco = findVal('Infra');
+                                }
+                                plano = findVal('Plano');
+                                valorPlano = findVal('Valor do Plano');
+
+                                const ufRegex = /(?:,\s*)(AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)\s*$/i;
+                                for (const line of lines) {
+                                    const match = line.match(ufRegex);
+                                    if (match) {
+                                        uf = match[1].toUpperCase();
+                                        break;
+                                    }
+                                }
 
                                 if (dataInst !== '--' && !dataInst.toLowerCase().includes('falha')) {
                                     chevron.click(); await delay(500); break;
@@ -634,7 +691,7 @@ export class TimVendasRPA {
                             }
                         }
                     }
-                    results.push({ nome, cpf, ordem, data: dataVenda, status: 'Em andamento', datainst: dataInst, statusinst: statusInst });
+                    results.push({ nome, cpf, uf, ordem, data: dataVenda, status: 'Em andamento', datainst: dataInst, statusinst: statusInst, infraco, plano, valorPlano });
                 }
                 return results;
             }, { alreadyProcessed: jaProcessados });

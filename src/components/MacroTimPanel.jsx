@@ -1,12 +1,82 @@
 import React, { useState, useEffect } from 'react';
 import { Zap, ChevronLeft, ChevronRight, LogIn } from 'lucide-react';
 import { showToast } from './Toast';
+import { useStore } from '../store';
 
 export default function MacroTimPanel({ extractedData, handleExtract, handleLaunchMacro, setStatus, onOpenTokenModal }) {
+  const setExtractedData = useStore(state => state.setExtractedData);
+
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL'); // ALL, PENDING, LAUNCHED
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+
+  // Track currently editing cell: { rowId, field, originalValue }
+  const [editingCell, setEditingCell] = useState(null);
+
+  const handleFieldChange = (rowId, field, value) => {
+    setExtractedData(prev =>
+      prev.map((order, idx) => {
+        const currentId = order.id || order.ordem || `row-${idx}`;
+        return currentId === rowId ? { ...order, [field]: value } : order;
+      })
+    );
+  };
+
+  const startEditingCell = (rowId, field, value) => {
+    setEditingCell({ rowId, field, originalValue: value });
+  };
+
+  const handleBlur = () => {
+    setEditingCell(null);
+  };
+
+  const handleKeyDown = (e, rowId, field) => {
+    if (e.key === 'Enter') {
+      setEditingCell(null);
+    } else if (e.key === 'Escape') {
+      // Revert to backup value
+      if (editingCell) {
+        handleFieldChange(rowId, field, editingCell.originalValue);
+      }
+      setEditingCell(null);
+    }
+  };
+
+  const handleDelete = (rowId) => {
+    setExtractedData(prev =>
+      prev.filter((order, idx) => {
+        const currentId = order.id || order.ordem || `row-${idx}`;
+        return currentId !== rowId;
+      })
+    );
+    showToast('Pedido excluído com sucesso.', 'info');
+  };
+
+  const handleAddRow = () => {
+    const newId = `new-${Date.now()}`;
+    const newOrder = {
+      id: newId,
+      nome: '',
+      cpf: '',
+      uf: '',
+      ordem: '',
+      data: new Date().toLocaleDateString('pt-BR'),
+      bio: '',
+      status: 'Em andamento',
+      infraco: '',
+      plano: '',
+      valorPlano: '',
+      datainst: '',
+      statusinst: '',
+      consultor: '',
+      supervisor: '',
+      launched: false
+    };
+    setExtractedData(prev => [newOrder, ...prev]);
+    // Automatically set edit mode on Name field for new row
+    setEditingCell({ rowId: newId, field: 'nome', originalValue: '' });
+  };
 
   const totalCount = Array.isArray(extractedData) ? extractedData.length : 0;
   const pending = Array.isArray(extractedData) ? extractedData.filter(i => !i.launched) : [];
@@ -42,6 +112,71 @@ export default function MacroTimPanel({ extractedData, handleExtract, handleLaun
   const endIndex = Math.min(startIndex + pageSize, totalItems);
   const paginatedOrders = filteredOrders.slice(startIndex, endIndex);
 
+  // Helper to render editable table cells
+  const renderCell = (order, rowId, field, style = {}, options = null, customDisplay = null) => {
+    const isEditing = editingCell?.rowId === rowId && editingCell?.field === field;
+    const value = order[field] || '';
+
+    const inputStyle = {
+      background: 'rgba(99, 102, 241, 0.15)',
+      border: '1px solid var(--primary)',
+      borderRadius: '6px',
+      color: '#F8FAFC',
+      padding: '4px 8px',
+      fontSize: '0.8rem',
+      outline: 'none',
+      width: '100%',
+      fontFamily: 'inherit'
+    };
+
+    const selectStyle = {
+      ...inputStyle,
+      appearance: 'none',
+      paddingRight: '20px',
+      backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`,
+      backgroundRepeat: 'no-repeat',
+      backgroundPosition: 'right 8px center'
+    };
+
+    return (
+      <td 
+        style={{ padding: '8px 12px', borderRight: '1px solid #334155', cursor: 'pointer', minWidth: '100px', ...style }}
+        onDoubleClick={() => startEditingCell(rowId, field, value)}
+        title="Clique duplo para editar"
+      >
+        {isEditing ? (
+          options ? (
+            <select 
+              style={selectStyle} 
+              value={value} 
+              onChange={e => {
+                handleFieldChange(rowId, field, e.target.value);
+                setEditingCell(null);
+              }}
+              onBlur={handleBlur}
+              autoFocus
+            >
+              {options.map(opt => (
+                <option key={opt} value={opt}>{opt}</option>
+              ))}
+            </select>
+          ) : (
+            <input 
+              style={inputStyle} 
+              value={value} 
+              onChange={e => handleFieldChange(rowId, field, e.target.value)} 
+              onBlur={handleBlur}
+              onKeyDown={e => handleKeyDown(e, rowId, field)}
+              autoFocus 
+            />
+          )
+        ) : (
+          customDisplay ? customDisplay : (value || <span style={{ color: '#475569', fontStyle: 'italic', fontSize: '0.75rem' }}>clique duplo</span>)
+        )}
+      </td>
+    );
+  };
+
   return (
     <>
       <div className="header-bar">
@@ -52,6 +187,9 @@ export default function MacroTimPanel({ extractedData, handleExtract, handleLaun
           <button className="btn btn-primary" onClick={() => handleExtract('tim')}>Extrair do App</button>
           <button className="btn btn-secondary" onClick={onOpenTokenModal} title="Forçar Login com Token RSA" style={{ padding: '0 12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <LogIn size={16} /> Login
+          </button>
+          <button className="btn btn-primary" onClick={handleAddRow} style={{ background: 'linear-gradient(135deg, #10B981, #059669)', color: 'white' }}>
+            Adicionar Pedido
           </button>
           <button className="btn btn-success" onClick={async () => {
             if (pending.length === 0) {
@@ -118,50 +256,84 @@ export default function MacroTimPanel({ extractedData, handleExtract, handleLaun
                   <div style={{ padding: '12px', resize: 'horizontal', overflow: 'hidden', minWidth: '150px', color: '#94A3B8', textAlign: 'left', display: 'inline-block', width: '100%' }}>CPF</div>
                 </th>
                 <th style={{ padding: 0, borderBottom: '2px solid #334155', borderRight: '1px solid #334155' }}>
+                  <div style={{ padding: '12px', resize: 'horizontal', overflow: 'hidden', minWidth: '70px', color: '#94A3B8', textAlign: 'left', display: 'inline-block', width: '100%' }}>UF</div>
+                </th>
+                <th style={{ padding: 0, borderBottom: '2px solid #334155', borderRight: '1px solid #334155' }}>
                   <div style={{ padding: '12px', resize: 'horizontal', overflow: 'hidden', minWidth: '180px', color: '#94A3B8', textAlign: 'left', display: 'inline-block', width: '100%' }}>ORDEM DE VENDA</div>
                 </th>
                 <th style={{ padding: 0, borderBottom: '2px solid #334155', borderRight: '1px solid #334155' }}>
                   <div style={{ padding: '12px', resize: 'horizontal', overflow: 'hidden', minWidth: '130px', color: '#94A3B8', textAlign: 'left', display: 'inline-block', width: '100%' }}>DATA VENDA</div>
                 </th>
                 <th style={{ padding: 0, borderBottom: '2px solid #334155', borderRight: '1px solid #334155' }}>
+                  <div style={{ padding: '12px', resize: 'horizontal', overflow: 'hidden', minWidth: '150px', color: '#94A3B8', textAlign: 'left', display: 'inline-block', width: '100%' }}>BIOMETRIA</div>
+                </th>
+                <th style={{ padding: 0, borderBottom: '2px solid #334155', borderRight: '1px solid #334155' }}>
                   <div style={{ padding: '12px', resize: 'horizontal', overflow: 'hidden', minWidth: '140px', color: '#94A3B8', textAlign: 'left', display: 'inline-block', width: '100%' }}>STATUS GERAL</div>
+                </th>
+                <th style={{ padding: 0, borderBottom: '2px solid #334155', borderRight: '1px solid #334155' }}>
+                  <div style={{ padding: '12px', resize: 'horizontal', overflow: 'hidden', minWidth: '130px', color: '#94A3B8', textAlign: 'left', display: 'inline-block', width: '100%' }}>INFRACO</div>
+                </th>
+                <th style={{ padding: 0, borderBottom: '2px solid #334155', borderRight: '1px solid #334155' }}>
+                  <div style={{ padding: '12px', resize: 'horizontal', overflow: 'hidden', minWidth: '180px', color: '#94A3B8', textAlign: 'left', display: 'inline-block', width: '100%' }}>PLANO</div>
+                </th>
+                <th style={{ padding: 0, borderBottom: '2px solid #334155', borderRight: '1px solid #334155' }}>
+                  <div style={{ padding: '12px', resize: 'horizontal', overflow: 'hidden', minWidth: '150px', color: '#94A3B8', textAlign: 'left', display: 'inline-block', width: '100%' }}>VALOR DO PLANO</div>
                 </th>
                 <th style={{ padding: 0, borderBottom: '2px solid #334155', borderRight: '1px solid #334155' }}>
                   <div style={{ padding: '12px', resize: 'horizontal', overflow: 'hidden', minWidth: '180px', color: '#94A3B8', textAlign: 'left', display: 'inline-block', width: '100%' }}>AGENDAMENTO INST.</div>
                 </th>
-                <th style={{ padding: 0, borderBottom: '2px solid #334155' }}>
+                <th style={{ padding: 0, borderBottom: '2px solid #334155', borderRight: '1px solid #334155' }}>
                   <div style={{ padding: '12px', resize: 'horizontal', overflow: 'hidden', minWidth: '150px', color: '#94A3B8', textAlign: 'left', display: 'inline-block', width: '100%' }}>STATUS INST.</div>
+                </th>
+                <th style={{ padding: 0, borderBottom: '2px solid #334155', borderRight: '1px solid #334155' }}>
+                  <div style={{ padding: '12px', resize: 'horizontal', overflow: 'hidden', minWidth: '150px', color: '#94A3B8', textAlign: 'left', display: 'inline-block', width: '100%' }}>CONSULTOR</div>
+                </th>
+                <th style={{ padding: 0, borderBottom: '2px solid #334155' }}>
+                  <div style={{ padding: '12px', resize: 'horizontal', overflow: 'hidden', minWidth: '150px', color: '#94A3B8', textAlign: 'left', display: 'inline-block', width: '100%' }}>SUPERVISOR</div>
                 </th>
               </tr>
             </thead>
             <tbody>
-              {paginatedOrders.length > 0 ? paginatedOrders.map((order, idx) => (
-                <tr key={idx} style={{ borderBottom: '1px solid #334155', transition: 'background 0.3s', background: order.launched ? '#0F172A' : '#1E293B' }} className="table-row-hover">
-                  <td style={{ padding: '12px', fontWeight: 'bold', borderRight: '1px solid #334155' }}>{order.nome}
-                    {order.launched && <span style={{ marginLeft: '8px', fontSize: '0.65rem', color: '#10B981', background: '#10B98122', padding: '2px 5px', borderRadius: '4px' }}>Lançado</span>}
-                  </td>
-                  <td style={{ padding: '12px', color: '#CBD5E1', borderRight: '1px solid #334155' }}>{order.cpf}</td>
-                  <td style={{ padding: '12px', color: '#CBD5E1', borderRight: '1px solid #334155' }}>{order.ordem}</td>
-                  <td style={{ padding: '12px', color: '#CBD5E1', borderRight: '1px solid #334155' }}>{order.data}</td>
-                  <td style={{ padding: '12px', borderRight: '1px solid #334155' }}>
-                    <span style={{
-                       background: order.status === 'Em andamento' ? 'rgba(30, 58, 138, 0.4)' : '#334155',
-                       color: '#60A5FA',
-                       padding: '4px 10px',
-                       borderRadius: '6px',
-                       fontSize: '0.7rem',
-                       fontWeight: 'bold',
-                       border: '1px solid #1E40AF'
-                    }}>
-                      {order.status}
-                    </span>
-                  </td>
-                  <td style={{ padding: '12px', color: '#10B981', fontWeight: 'bold', borderRight: '1px solid #334155' }}>{order.datainst}</td>
-                  <td style={{ padding: '12px', color: '#F59E0B', fontWeight: 'bold' }}>{order.statusinst}</td>
-                </tr>
-              )) : (
+              {paginatedOrders.length > 0 ? paginatedOrders.map((order, idx) => {
+                const rowId = order.id || order.ordem || `row-${idx}`;
+                return (
+                  <tr key={rowId} style={{ borderBottom: '1px solid #334155', transition: 'background 0.3s', background: order.launched ? '#0F172A' : '#1E293B' }} className="table-row-hover">
+                    {renderCell(order, rowId, 'nome', { fontWeight: 'bold' }, null, (
+                      <>
+                        {order.nome || <span style={{ color: '#475569', fontStyle: 'italic', fontSize: '0.75rem' }}>clique duplo</span>}
+                        {order.launched && <span style={{ marginLeft: '8px', fontSize: '0.65rem', color: '#10B981', background: '#10B98122', padding: '2px 5px', borderRadius: '4px' }}>Lançado</span>}
+                      </>
+                    ))}
+                    {renderCell(order, rowId, 'cpf', { color: '#CBD5E1' })}
+                    {renderCell(order, rowId, 'uf', { color: '#CBD5E1', fontWeight: 'bold' })}
+                    {renderCell(order, rowId, 'ordem', { color: '#CBD5E1' })}
+                    {renderCell(order, rowId, 'data', { color: '#CBD5E1' })}
+                    {renderCell(order, rowId, 'bio', { color: '#CBD5E1' })}
+                    {renderCell(order, rowId, 'status', {}, ['Em andamento', 'Sucesso', 'Cancelado'], (
+                      <span style={{
+                         background: order.status === 'Em andamento' ? 'rgba(30, 58, 138, 0.4)' : '#334155',
+                         color: '#60A5FA',
+                         padding: '4px 10px',
+                         borderRadius: '6px',
+                         fontSize: '0.7rem',
+                         fontWeight: 'bold',
+                         border: '1px solid #1E40AF'
+                      }}>
+                        {order.status || 'Em andamento'}
+                      </span>
+                    ))}
+                    {renderCell(order, rowId, 'infraco', { color: '#CBD5E1' })}
+                    {renderCell(order, rowId, 'plano', { color: '#CBD5E1' })}
+                    {renderCell(order, rowId, 'valorPlano', { color: '#CBD5E1' })}
+                    {renderCell(order, rowId, 'datainst', { color: '#10B981', fontWeight: 'bold' })}
+                    {renderCell(order, rowId, 'statusinst', { color: '#F59E0B', fontWeight: 'bold' })}
+                    {renderCell(order, rowId, 'consultor', { color: '#CBD5E1' })}
+                    {renderCell(order, rowId, 'supervisor', { color: '#CBD5E1', borderRight: 'none' })}
+                  </tr>
+                );
+              }) : (
                 <tr>
-                  <td colSpan="7" style={{ padding: '40px', textAlign: 'center', color: '#94A3B8' }}>
+                  <td colSpan="14" style={{ padding: '40px', textAlign: 'center', color: '#94A3B8' }}>
                     {totalCount === 0 ? 'Nenhum pedido "Em andamento" detectado. Aguardando atualização...' : 'Nenhum pedido corresponde à busca/filtro.'}
                   </td>
                 </tr>
