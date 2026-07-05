@@ -242,7 +242,10 @@ export const useStore = create(
       },
 
       // Inicializar Socket e Listeners
-      initSocket: () => {
+      initSocket: (user) => {
+        if (user) {
+          socket.io.opts.query = { perfil: user.perfil };
+        }
         if (!socket.connected) {
           socket.connect();
         }
@@ -280,6 +283,9 @@ export const useStore = create(
         socket.off('status_update');
         socket.off('vtme_data');
         socket.off('tim_data');
+        if (socket.connected) {
+          socket.disconnect();
+        }
       }
     }),
     {

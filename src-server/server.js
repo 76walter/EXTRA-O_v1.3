@@ -10,11 +10,15 @@ import { initDatabase } from './database/mariadb.js';
 import { authRoutes } from './routes/authRoutes.js';
 import { usuarioRoutes } from './routes/usuarioRoutes.js';
 import { authMiddleware } from './middleware/authMiddleware.js';
+import { exec } from 'child_process';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 
 const app = express();
 const httpServer = http.createServer(app);
 
-app.use(cors({ origin: ['http://localhost:5173', 'http://127.0.0.1:5173'] }));
+app.use(cors({ origin: '*' }));
 app.use(express.json());
 
 // Rotas de autenticação públicas e privadas
@@ -22,6 +26,30 @@ app.use('/api/auth', authRoutes);
 
 // Rotas de usuários privadas
 app.use('/api/usuarios', usuarioRoutes);
+
+// Rota pública para abrir o Bloco de Notas (Notepad)
+app.post('/api/open-notepad', (req, res) => {
+    const { text } = req.body;
+    if (!text) {
+        return res.status(400).json({ error: 'Nenhum texto fornecido' });
+    }
+    try {
+        const tempDir = os.tmpdir();
+        const filePath = path.join(tempDir, `mascara_3c_${Date.now()}.txt`);
+        fs.writeFileSync(filePath, text, 'utf-8');
+        
+        exec(`notepad.exe "${filePath}"`, (err) => {
+            if (err) {
+                console.error('[Server] Erro ao abrir Notepad:', err);
+            }
+        });
+        
+        res.json({ success: true, file: filePath });
+    } catch (error) {
+        console.error('[Server] Erro no /api/open-notepad:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
 
 // Protege as rotas legadas e WhatsApp com JWT
 app.use('/', authMiddleware, legacyRoutes);

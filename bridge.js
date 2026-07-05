@@ -733,30 +733,41 @@ app.get('/extract-tim-auto', async (req, res) => {
             console.log(`✅ Auto TIM: ${finalResults.length} novos pedidos processados.`);
         } else {
             console.log("🟡 Auto TIM: Nenhum pedido novo encontrado.");
-        }
-
-        res.json({ success: true, data: finalResults });
-    } catch (error) {
-        console.error("Erro Auto TIM:", error);
-        res.status(500).json({ error: error.message });
-    } finally {
-        isExtractingTim = false;
-    }
-});
-
-app.post('/macro-tim', async (req, res) => {
+    app.post('/macro-tim', async (req, res) => {
     try {
         const payload = req.body.data;
         if (!payload) return res.status(400).json({ error: 'Nenhum dado fornecido' });
+
+        // Carrega o histórico de pedidos lançados
+        const LAUNCHED_ORDERS_FILE = path.join(process.cwd(), 'launched_tim_orders.json');
+        let launchedList = [];
+        if (fs.existsSync(LAUNCHED_ORDERS_FILE)) {
+            try {
+                launchedList = JSON.parse(fs.readFileSync(LAUNCHED_ORDERS_FILE, 'utf-8'));
+            } catch (e) {
+                console.error("Erro ao ler launched_tim_orders.json:", e);
+            }
+        }
+
+        const rawItems = Array.isArray(payload) ? payload : [payload];
+        const items = rawItems.filter(item => {
+            const key = (item.ordem && item.ordem !== '--') ? item.ordem : (item.id || item.nome);
+            return key && !launchedList.includes(key);
+        });
+
+        if (items.length === 0) {
+            console.log("🟡 Nenhum pedido novo para lançar na planilha.");
+            return res.json({ success: true, count: 0 });
+        }
 
         const ctx = await initBrowser();
         const pages = ctx.pages();
         
         // Link da Planilha 'MACRO APP 2026' atualizado
-        let sheetUrl = "https://excel.cloud.microsoft/open/onedrive/?docId=D7954F0A2A4EFE88%21sfa65ca8fcc1f4dbb87e6f0da74331160&driveId=D7954F0A2A4EFE88"; 
+        let sheetUrl = "https://excel.cloud.microsoft/open/onedrive/?docId=D7954F0A2A4EFE88%21s2528d66f763f4b8da594141c18e1da1c&driveId=D7954F0A2A4EFE88"; 
         
         // Identificação via ID único da planilha para não confundir com outras
-        let sheetPage = pages.find(p => p.url().includes('sfa65ca8fcc1f4dbb87e6f0da74331160'));
+        let sheetPage = pages.find(p => p.url().includes('s2528d66f763f4b8da594141c18e1da1c'));
         
         if (!sheetPage) {
             sheetPage = await ctx.newPage();
@@ -768,50 +779,83 @@ app.post('/macro-tim', async (req, res) => {
             await sheetPage.bringToFront();
         }
 
-        console.log("Preenchendo a Planilha Macro...");
+        console.log(`Preenchendo a Planilha Macro com ${items.length} novo(s) pedido(s)...`);
         
-        await sheetPage.keyboard.press('Control+Home'); // Força ir pra G1, D1 ou pro topo absoluto A1
-        await sheetPage.waitForTimeout(600);
-        await sheetPage.keyboard.press('Control+Home'); // Garante que a seleção vá para A1 exato (repete por garantia)
-        await sheetPage.waitForTimeout(600);
-        await sheetPage.keyboard.press('ArrowDown'); // Desce para A2 (abaixo do cabecalho original)
-        await sheetPage.waitForTimeout(300);
-
-        // O fluxo pedido: Força a busca Coluna A descendo uma a uma sem usar atalhos que pulam a tela inteira.
-        for (let idx = 0; idx < 1000; idx++) {
-            await sheetPage.keyboard.press('Control+c'); // Copia o campo invisível atual
-            await sheetPage.waitForTimeout(100);
+        // 1. Ir para A1 (topo)
+        await sheetPage.keyboard.press('Control+Home');
+        await sheetPage.waitForTimeout(500);
+        
+        // 2. Descer para A2 (primeira linha de dados potencial)
+        await sheetPage.keyboard.press('ArrowDown');
+        await sheetPage.waitForTimeout(200);
+        
+        // 3. Copiar e verificar se A2 está vazia
+        await sheetPage.keyboard.press('Control+c');
+        await sheetPage.waitForTimeout(200);
+        let cellContent = await sheetPage.evaluate(async () => {
+            try { return await navigator.clipboard.readText(); } catch (e) { return ''; }
+        });
+        
+        const isA2Filled = cellContent && cellContent.trim().length > 0;
+        if (isA2Filled) {
+            // 4. Se A2 está preenchida, agora é seguro usar Ctrl+ArrowDown para pular ao fim dos dados
+            console.log('A2 preenchida. Dando Ctrl+Down para pular ao fim dos dados...');
+            await sheetPage.keyboard.press('Control+ArrowDown');
+            await sheetPage.waitForTimeout(300);
             
-            const cellContent = await sheetPage.evaluate(async () => {
-                try { return await navigator.clipboard.readText(); } catch(e) { return null; }
+            // 5. Desce 1 linha para a primeira vazia
+            await sheetPage.keyboard.press('ArrowDown');
+            await sheetPage.waitForTimeout(200);
+            
+            // Volta para a coluna A (Home)
+            await sheetPage.keyboard.press('Home');
+            await sheetPage.waitForTimeout(200);
+            
+            // 6. Verificação final com busca incremental curta de segurança
+            await sheetPage.keyboard.press('Control+c');
+            await sheetPage.waitForTimeout(200);
+            cellContent = await sheetPage.evaluate(async () => {
+                try { return await navigator.clipboard.readText(); } catch (e) { return ''; }
             });
             
-            // Verifica se a célula tem caracteres (ignorando quebras de linha padrão do excel copiavel)
-            const isFilled = cellContent && cellContent.trim().length > 0;
-            if (!isFilled) {
-                // Chegou na primeira vazia verdadeira! Sai do loop.
-                console.log(`Célula vazia encontrada apos descer ${idx + 1} linhas na Col. A`);
-                break;
-            } else {
-                // Linha ocupada! Continua a peregrinação de descida pela Coluna A
-                await sheetPage.keyboard.press('ArrowDown');
-                await sheetPage.waitForTimeout(80);
+            if (cellContent && cellContent.trim().length > 0) {
+                console.log('⚠️ Ctrl+Down não parou em célula vazia. Fazendo busca incremental...');
+                for (let i = 0; i < 200; i++) {
+                    await sheetPage.keyboard.press('ArrowDown');
+                    await sheetPage.waitForTimeout(50);
+                    await sheetPage.keyboard.press('Control+c');
+                    await sheetPage.waitForTimeout(100);
+                    const check = await sheetPage.evaluate(async () => {
+                        try { return await navigator.clipboard.readText(); } catch (e) { return ''; }
+                    });
+                    if (!check || check.trim().length === 0) {
+                        console.log(`✅ Linha vazia encontrada após ${i + 1} passos incrementais.`);
+                        break;
+                    }
+                }
             }
+        } else {
+            console.log('✅ A2 está vazia, iniciando inserção a partir da linha 2.');
         }
         
         // Agora estamos estritamente na primeira célula em branco da Coluna A.
-        const items = Array.isArray(payload) ? payload : [payload];
-
         for (const item of items) {
-            // Monta as 7 colunas exatas exigidas pela interface
+            // Monta as 14 colunas exatas exigidas pela interface
             const fields = [
                 item.nome,           // Coluna A: NOME DO CLIENTE
                 item.cpf,            // Coluna B: CPF
-                item.ordem,          // Coluna C: ORDEM DE VENDA
-                item.data,           // Coluna D: DATA VENDA
-                item.status,         // Coluna E: STATUS GERAL
-                item.datainst,       // Coluna F: AGENDAMENTO INST.
-                item.statusinst      // Coluna G: STATUS INST.
+                item.uf,             // Coluna C: UF
+                item.ordem,          // Coluna D: ORDEM DE VENDA
+                item.data,           // Coluna E: DATA VENDA
+                item.bio,            // Coluna F: BIOMETRIA
+                item.status,         // Coluna G: STATUS GERAL
+                item.infraco,        // Coluna H: INFRACO
+                item.plano,          // Coluna I: PLANO
+                item.valorPlano,     // Coluna J: VALOR DO PLANO
+                item.datainst,       // Coluna K: AGENDAMENTO INST.
+                item.statusinst,     // Coluna L: STATUS INST.
+                item.consultor,      // Coluna M: CONSULTOR
+                item.supervisor      // Coluna N: SUPERVISOR
             ];
 
             // Digita coluna por coluna
@@ -830,12 +874,25 @@ app.post('/macro-tim', async (req, res) => {
             await sheetPage.waitForTimeout(400);
         }
 
+        // Salva os novos itens no histórico de lançados
+        items.forEach(item => {
+            const key = (item.ordem && item.ordem !== '--') ? item.ordem : (item.id || item.nome);
+            if (key) {
+                launchedList.push(key);
+            }
+        });
+        try {
+            fs.writeFileSync(LAUNCHED_ORDERS_FILE, JSON.stringify(launchedList, null, 2), 'utf-8');
+        } catch (e) {
+            console.error("Erro ao salvar lançado em launched_tim_orders.json:", e);
+        }
+
         res.json({ success: true, count: items.length });
     } catch (error) {
         console.error("Erro ao preencher Macro:", error);
         res.status(500).json({ error: 'Erro ao preencher Macro' });
     }
-});
+
 
 async function getVTMEPage() {
     try {

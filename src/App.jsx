@@ -108,9 +108,9 @@ function AppMain() {
 
   useEffect(() => {
     checkDailyReset();
-    initSocket();
+    initSocket(user);
     return () => cleanupSocket();
-  }, []);
+  }, [user]);
 
   // Dashboard State
   const [filterQuery, setFilterQuery] = useState('');
@@ -807,13 +807,27 @@ function AppMain() {
   const handleLaunchMacro = async (pendentes) => {
     setStatus({ text: '📊 Lançando Macro...', active: true });
     try {
-      await apiFetch('/macro-tim', {
+      const response = await apiFetch('/macro-tim', {
         method: 'POST',
         body: JSON.stringify({ data: pendentes }),
         signal: AbortSignal.timeout(60000)
       });
+      
+      const resData = await response.json();
+      
+      if (response.ok && resData.count === 0) {
+        showToast('Não foram adicionados dados novos na tela para serem lançados na Macro acompanhamento.xlsm', 'info');
+        setExtractedData(prev => prev.map(item => ({ ...item, launched: true })));
+        setStatus({ text: '✅ Todos os dados já constam lançados', active: true });
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(resData.error || 'Erro ao lançar');
+      }
+
       setExtractedData(prev => prev.map(item => ({ ...item, launched: true })));
-      setStatus({ text: `✅ ${pendentes.length} novos lançados com Sucesso!`, active: true });
+      setStatus({ text: `✅ ${resData.count} novos lançados com Sucesso!`, active: true });
     } catch (error) {
       console.error(error);
       setStatus({ text: '❌ Erro ao Lançar', active: true });

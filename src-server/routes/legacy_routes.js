@@ -1,5 +1,7 @@
 
 import express from 'express';
+import fs from 'fs';
+import path from 'path';
 import { initHeadlessBrowser, initHeadedBrowser, isBrowserActive, autoLogin, getHeadlessContext, getHeadedContext, isExtracting, isExtractingTim, setExtracting, setExtractingTim, closeBrowsers } from '../browser/manager.js';
 import { loadMasks, saveMasks, loadSettings, saveSettings } from '../utils/storage.js';
 import { ENV } from '../config/env.js';
@@ -128,36 +130,53 @@ async function processQueue() {
     isProcessingQueue = false;
 }
 
-// Localização rápida de linha vazia via Ctrl+End (otimizado)
+// Localização rápida de linha vazia (otimizado)
 async function findFirstEmptyRow(sheetPage) {
-    console.log("🔍 Localizando primeira linha vazia (método rápido)...");
+    console.log("🔍 Localizando primeira linha vazia...");
     
-    // Método 1: Ctrl+End vai para a última célula usada, depois desce 1 linha
+    // 1. Ir para A1 (topo)
     await sheetPage.keyboard.press('Control+Home');
     await sheetPage.waitForTimeout(500);
     
-    // Vai para coluna A e usa Ctrl+Down para pular direto ao fim dos dados
-    await sheetPage.keyboard.press('Control+ArrowDown');
-    await sheetPage.waitForTimeout(300);
-    
-    // Agora desce 1 linha para a primeira vazia
+    // 2. Descer para A2 (primeira linha de dados potencial)
     await sheetPage.keyboard.press('ArrowDown');
     await sheetPage.waitForTimeout(200);
     
-    // Volta para a coluna A (Home) caso tenha saído
+    // 3. Copiar e verificar se A2 está vazia
+    await sheetPage.keyboard.press('Control+c');
+    await sheetPage.waitForTimeout(200);
+    let cellContent = await sheetPage.evaluate(async () => {
+        try { return await navigator.clipboard.readText(); } catch (e) { return ''; }
+    });
+    
+    const isA2Filled = cellContent && cellContent.trim().length > 0;
+    if (!isA2Filled) {
+        console.log('✅ A2 está vazia, iniciando inserção a partir da linha 2.');
+        return true;
+    }
+    
+    // 4. Se A2 está preenchida, agora é seguro usar Ctrl+ArrowDown para pular ao fim dos dados
+    console.log('A2 preenchida. Dando Ctrl+Down para pular ao fim dos dados...');
+    await sheetPage.keyboard.press('Control+ArrowDown');
+    await sheetPage.waitForTimeout(300);
+    
+    // 5. Desce 1 linha para a primeira vazia
+    await sheetPage.keyboard.press('ArrowDown');
+    await sheetPage.waitForTimeout(200);
+    
+    // Volta para a coluna A (Home)
     await sheetPage.keyboard.press('Home');
     await sheetPage.waitForTimeout(200);
     
-    // Verificação: lê o conteúdo da célula atual para garantir que está vazia
+    // 6. Verificação final
     await sheetPage.keyboard.press('Control+c');
     await sheetPage.waitForTimeout(200);
-    const cellContent = await sheetPage.evaluate(async () => {
+    cellContent = await sheetPage.evaluate(async () => {
         try { return await navigator.clipboard.readText(); } catch (e) { return ''; }
     });
     
     if (cellContent && cellContent.trim().length > 0) {
-        // Se não está vazia, faz fallback com busca incremental curta
-        console.log('⚠️ Ctrl+End não chegou a uma célula vazia. Fazendo busca incremental...');
+        console.log('⚠️ Ctrl+Down não parou em célula vazia. Fazendo busca incremental...');
         for (let i = 0; i < 200; i++) {
             await sheetPage.keyboard.press('ArrowDown');
             await sheetPage.waitForTimeout(50);
@@ -175,7 +194,7 @@ async function findFirstEmptyRow(sheetPage) {
         return false;
     }
     
-    console.log('✅ Primeira linha vazia encontrada rapidamente via Ctrl+Down.');
+    console.log('✅ Primeira linha vazia encontrada.');
     return true;
 }
 
@@ -426,6 +445,9 @@ app.get('/open-vtme', async (req, res) => {
 });
 
 app.get('/open-tim', async (req, res) => {
+    if (req.user && req.user.perfil === 'CHURN') {
+        return res.status(403).json({ error: 'Acesso ao App TIM Vendas não permitido para o perfil CHURN.' });
+    }
     try {
         const ctx = await initHeadedBrowser();
         const pages = ctx.pages();
@@ -446,6 +468,9 @@ app.get('/open-tim', async (req, res) => {
 });
 
 app.post('/login-tim', async (req, res) => {
+    if (req.user && req.user.perfil === 'CHURN') {
+        return res.status(403).json({ error: 'Login TIM não permitido para o perfil CHURN.' });
+    }
     try {
         const { token } = req.body;
         if (!token) return res.status(400).json({ error: 'Token não fornecido' });
@@ -557,6 +582,9 @@ app.post('/login-tim', async (req, res) => {
 });
 
 app.get('/extract-tim', async (req, res) => {
+    if (req.user && req.user.perfil === 'CHURN') {
+        return res.status(403).json({ error: 'A extração do TIM não é permitida para o perfil CHURN.' });
+    }
     try {
         // Recebe lista de ordens já processadas do frontend para evitar reprocessamento
         let processedOrders = [];
@@ -571,18 +599,43 @@ app.get('/extract-tim', async (req, res) => {
 });
 
 app.post('/macro-tim', async (req, res) => {
+    if (req.user && req.user.perfil === 'CHURN') {
+        return res.status(403).json({ error: 'Preenchimento de Macro não permitido para o perfil CHURN.' });
+    }
     try {
         const payload = req.body.data;
         if (!payload) return res.status(400).json({ error: 'Nenhum dado fornecido' });
+
+        // Carrega o histórico de pedidos lançados
+        const LAUNCHED_ORDERS_FILE = path.join(process.cwd(), 'launched_tim_orders.json');
+        let launchedList = [];
+        if (fs.existsSync(LAUNCHED_ORDERS_FILE)) {
+            try {
+                launchedList = JSON.parse(fs.readFileSync(LAUNCHED_ORDERS_FILE, 'utf-8'));
+            } catch (e) {
+                console.error("Erro ao ler launched_tim_orders.json:", e);
+            }
+        }
+
+        const rawItems = Array.isArray(payload) ? payload : [payload];
+        const items = rawItems.filter(item => {
+            const key = (item.ordem && item.ordem !== '--') ? item.ordem : (item.id || item.nome);
+            return key && !launchedList.includes(key);
+        });
+
+        if (items.length === 0) {
+            console.log("🟡 Nenhum pedido novo para lançar na planilha.");
+            return res.json({ success: true, count: 0 });
+        }
 
         const ctx = await initHeadedBrowser();
         const pages = ctx.pages();
         
         // Link da Planilha 'MACRO APP 2026' atualizado
-        let sheetUrl = "https://excel.cloud.microsoft/open/onedrive/?docId=D7954F0A2A4EFE88%21sfa65ca8fcc1f4dbb87e6f0da74331160&driveId=D7954F0A2A4EFE88"; 
+        let sheetUrl = "https://excel.cloud.microsoft/open/onedrive/?docId=D7954F0A2A4EFE88%21s2528d66f763f4b8da594141c18e1da1c&driveId=D7954F0A2A4EFE88"; 
         
         // Identificação via ID único da planilha para não confundir com outras
-        let sheetPage = pages.find(p => p.url().includes('sfa65ca8fcc1f4dbb87e6f0da74331160'));
+        let sheetPage = pages.find(p => p.url().includes('s2528d66f763f4b8da594141c18e1da1c'));
         
         if (!sheetPage) {
             sheetPage = await ctx.newPage();
@@ -599,24 +652,27 @@ app.post('/macro-tim', async (req, res) => {
             await sheetPage.bringToFront();
         }
 
-        console.log("Preenchendo a Planilha Macro...");
+        console.log(`Preenchendo a Planilha Macro com ${items.length} novo(s) pedido(s)...`);
         
         await findFirstEmptyRow(sheetPage);
 
-        
-        // Agora estamos estritamente na primeira célula em branco da Coluna A.
-        const items = Array.isArray(payload) ? payload : [payload];
-
         for (const item of items) {
-            // Monta as 7 colunas exatas exigidas pela interface
+            // Monta as 14 colunas exatas exigidas pela interface
             const fields = [
                 item.nome,           // Coluna A: NOME DO CLIENTE
                 item.cpf,            // Coluna B: CPF
-                item.ordem,          // Coluna C: ORDEM DE VENDA
-                item.data,           // Coluna D: DATA VENDA
-                item.status,         // Coluna E: STATUS GERAL
-                item.datainst,       // Coluna F: AGENDAMENTO INST.
-                item.statusinst      // Coluna G: STATUS INST.
+                item.uf,             // Coluna C: UF
+                item.ordem,          // Coluna D: ORDEM DE VENDA
+                item.data,           // Coluna E: DATA VENDA
+                item.bio,            // Coluna F: BIOMETRIA
+                item.status,         // Coluna G: STATUS GERAL
+                item.infraco,        // Coluna H: INFRACO
+                item.plano,          // Coluna I: PLANO
+                item.valorPlano,     // Coluna J: VALOR DO PLANO
+                item.datainst,       // Coluna K: AGENDAMENTO INST.
+                item.statusinst,     // Coluna L: STATUS INST.
+                item.consultor,      // Coluna M: CONSULTOR
+                item.supervisor      // Coluna N: SUPERVISOR
             ];
 
             // Digita coluna por coluna
@@ -633,6 +689,19 @@ app.post('/macro-tim', async (req, res) => {
             await sheetPage.waitForTimeout(200); // Reduzido de 400ms
             await sheetPage.keyboard.press('Home'); // Medida de segurança pra forçar voltar na Coluna A
             await sheetPage.waitForTimeout(200); // Reduzido de 400ms
+        }
+
+        // Salva os novos itens no histórico de lançados
+        items.forEach(item => {
+            const key = (item.ordem && item.ordem !== '--') ? item.ordem : (item.id || item.nome);
+            if (key) {
+                launchedList.push(key);
+            }
+        });
+        try {
+            fs.writeFileSync(LAUNCHED_ORDERS_FILE, JSON.stringify(launchedList, null, 2), 'utf-8');
+        } catch (e) {
+            console.error("Erro ao salvar lançado em launched_tim_orders.json:", e);
         }
 
         res.json({ success: true, count: items.length });

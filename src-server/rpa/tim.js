@@ -1,6 +1,8 @@
 import { initHeadedBrowser, isExtractingTim, setExtractingTim } from '../browser/manager.js';
 import { loadSettings } from '../utils/storage.js';
 import * as fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 export class TimVendasRPA {
     constructor() {
@@ -566,8 +568,9 @@ export class TimVendasRPA {
             // DUMP do DOM para debug
             try {
                 const html = await this.page.content();
-                fs.writeFileSync('tim_dom_dump.html', html);
-                console.log("💾 [TIM RPA] DOM salvo em tim_dom_dump.html para análise das tags.");
+                const tempDumpPath = path.join(os.tmpdir(), 'tim_dom_dump.html');
+                fs.writeFileSync(tempDumpPath, html);
+                console.log(`💾 [TIM RPA] DOM salvo em ${tempDumpPath} para análise das tags.`);
             } catch (e) {
                 console.error("Erro ao salvar DOM", e);
             }

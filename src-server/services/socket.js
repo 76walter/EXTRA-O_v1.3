@@ -16,6 +16,10 @@ export function initSocketService(httpServer) {
         console.log('🔗 Cliente conectado via WebSocket:', socket.id);
         connectedClients++;
         
+        const perfil = socket.handshake.query.perfil || 'UNKNOWN';
+        socket.perfil = perfil;
+        console.log(`👤 Perfil do cliente conectado: ${perfil}`);
+        
         if (connectedClients === 1) {
             console.log('Iniciando loops internos de extração...');
             runVTME();
@@ -76,6 +80,19 @@ async function runVTME() {
 
 async function runTIM() {
     if (connectedClients === 0) return;
+
+    // Verifica se há algum cliente conectado que não seja CHURN
+    const sockets = ioInstance ? Array.from(ioInstance.sockets.sockets.values()) : [];
+    const hasNonChurnClient = sockets.some(s => s.perfil !== 'CHURN');
+
+    if (!hasNonChurnClient) {
+        console.log('⏸️ [TIM Loop] Varredura TIM suspensa pois o único usuário conectado é do perfil CHURN.');
+        if (connectedClients > 0) {
+            timLoopTimer = setTimeout(runTIM, 300000); // 5 minutos
+        }
+        return;
+    }
+
     try {
         const r = await fetch(`http://localhost:${ENV.PORT}/extract-tim`, {
             headers: { 'x-internal-key': INTERNAL_API_KEY }
