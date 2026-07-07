@@ -137,16 +137,16 @@ export const useStore = create(
               
               // Sincroniza Biometria, Consultor e Supervisor do VTME de volta para o TIM Vendas (extractedData)
               let updatedTimItem = { ...timItem };
-              if (novoItem.bio && novoItem.bio !== '--') {
+              if (novoItem.bio) {
                 updatedTimItem.bio = novoItem.bio;
               }
-                if (novoItem.consultor && novoItem.consultor !== 'Consultor' && novoItem.consultor !== 'Não Identificado') {
-                  updatedTimItem.consultor = novoItem.consultor;
-                }
-                if (novoItem.supervisor && novoItem.supervisor !== 'Supervisor' && novoItem.supervisor !== 'Não Identificado') {
-                  updatedTimItem.supervisor = novoItem.supervisor;
-                }
-                timList[timItemIndex] = updatedTimItem;
+              if (novoItem.consultor) {
+                updatedTimItem.consultor = novoItem.consultor;
+              }
+              if (novoItem.supervisor) {
+                updatedTimItem.supervisor = novoItem.supervisor;
+              }
+              timList[timItemIndex] = updatedTimItem;
             }
 
             if (logIndex === -1) {
@@ -234,6 +234,20 @@ export const useStore = create(
       toggleVtmePause: () => {
         const current = get().isVtmePaused;
         socket.emit('set_vtme_pause', !current);
+      },
+
+      unlockRobots: async () => {
+        try {
+          const res = await apiFetch('/unlock-robots', { method: 'POST' });
+          if (res.ok) {
+            set({ isVtmePaused: true }); // Pausa para evitar novo re-lock imediato
+            socket.emit('set_vtme_pause', true);
+            return true;
+          }
+        } catch (e) {
+          console.error(e);
+        }
+        return false;
       },
 
       // Limpeza Diária

@@ -1000,3 +1000,10 @@ app.get('/extract', async (req, res) => {
         res.status(500).json({ error: e.message });
     }
 });
+
+app.post('/unlock-robots', (req, res) => {
+    console.log("🔓 [RPA] Forçando liberação de locks de extração...");
+    setExtracting(false);
+    setExtractingTim(false);
+    res.json({ success: true, message: 'Locks liberados com sucesso!' });
+});

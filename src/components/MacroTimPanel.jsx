@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Zap, ChevronLeft, ChevronRight, LogIn, Play, Pause } from 'lucide-react';
+import { Zap, ChevronLeft, ChevronRight, LogIn, Play, Pause, RefreshCw } from 'lucide-react';
 import { showToast } from './Toast';
 import { useStore } from '../store';
 
@@ -7,6 +7,7 @@ export default function MacroTimPanel({ extractedData, handleExtract, handleLaun
   const setExtractedData = useStore(state => state.setExtractedData);
   const isVtmePaused = useStore(state => state.isVtmePaused);
   const toggleVtmePause = useStore(state => state.toggleVtmePause);
+  const unlockRobots = useStore(state => state.unlockRobots);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [consultantFilter, setConsultantFilter] = useState('');
@@ -237,6 +238,27 @@ export default function MacroTimPanel({ extractedData, handleExtract, handleLaun
           >
             {isVtmePaused ? <Play size={16} /> : <Pause size={16} />}
             {isVtmePaused ? 'Liberar VTME' : 'Pausar VTME'}
+          </button>
+          <button 
+            className="btn btn-secondary" 
+            onClick={async () => {
+              const ok = await unlockRobots();
+              if (ok) {
+                showToast('Robôs destravados com sucesso! O VTME foi pausado.', 'success');
+              } else {
+                showToast('Falha ao destravar robôs.', 'error');
+              }
+            }}
+            style={{ 
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '0 12px'
+            }}
+            title="Destravar os robôs caso fiquem travados como Ocupados"
+          >
+            <RefreshCw size={16} />
+            Destravar Robô
           </button>
           {isFilterActive ? (
             <>
