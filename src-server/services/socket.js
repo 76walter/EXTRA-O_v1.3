@@ -6,6 +6,7 @@ let connectedClients = 0;
 let vtmeLoopTimer = null;
 let timLoopTimer = null;
 let ioInstance = null;
+let isVtmePaused = false;
 
 export function initSocketService(httpServer) {
     ioInstance = new Server(httpServer, {
@@ -20,6 +21,14 @@ export function initSocketService(httpServer) {
         socket.perfil = perfil;
         console.log(`👤 Perfil do cliente conectado: ${perfil}`);
         
+        socket.emit('vtme_pause_status', isVtmePaused);
+
+        socket.on('set_vtme_pause', (paused) => {
+            isVtmePaused = !!paused;
+            console.log(`⏸️ [VTME Loop] Alterado estado de pausa para: ${isVtmePaused}`);
+            ioInstance.emit('vtme_pause_status', isVtmePaused);
+        });
+
         if (connectedClients === 1) {
             console.log('Iniciando loops internos de extração...');
             runVTME();
@@ -61,6 +70,11 @@ export function emitTimData(data) {
 
 async function runVTME() {
     if (connectedClients === 0) return;
+    if (isVtmePaused) {
+        console.log("⏸️ [VTME Loop] Extração VTME automática suspensa (Pausada).");
+        vtmeLoopTimer = setTimeout(runVTME, 15000);
+        return;
+    }
     try {
         const r = await fetch(`http://localhost:${ENV.PORT}/extract-vtme-auto`, {
             headers: { 'x-internal-key': INTERNAL_API_KEY }

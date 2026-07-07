@@ -12,6 +12,7 @@ export const useStore = create(
       // --- Estado da Interface ---
       status: { text: '🔴 Sistema Inativo', active: false },
       bridgeHealth: { status: 'unknown', browser: false },
+      isVtmePaused: false,
       
       // --- Dados do Robô ---
       logs: [],
@@ -230,6 +231,11 @@ export const useStore = create(
         });
       },
       
+      toggleVtmePause: () => {
+        const current = get().isVtmePaused;
+        socket.emit('set_vtme_pause', !current);
+      },
+
       // Limpeza Diária
       checkDailyReset: () => {
         const today = new Date().toLocaleDateString('pt-BR');
@@ -252,6 +258,10 @@ export const useStore = create(
 
         socket.on('connect', () => {
           set({ bridgeHealth: { status: 'ok', browser: true } });
+        });
+
+        socket.on('vtme_pause_status', (paused) => {
+          set({ isVtmePaused: paused });
         });
 
         socket.on('disconnect', () => {
@@ -283,6 +293,7 @@ export const useStore = create(
         socket.off('status_update');
         socket.off('vtme_data');
         socket.off('tim_data');
+        socket.off('vtme_pause_status');
         if (socket.connected) {
           socket.disconnect();
         }

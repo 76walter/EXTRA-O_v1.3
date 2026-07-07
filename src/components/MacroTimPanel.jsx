@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Zap, ChevronLeft, ChevronRight, LogIn } from 'lucide-react';
+import { Zap, ChevronLeft, ChevronRight, LogIn, Play, Pause } from 'lucide-react';
 import { showToast } from './Toast';
 import { useStore } from '../store';
 
 export default function MacroTimPanel({ extractedData, handleExtract, handleLaunchMacro, setStatus, onOpenTokenModal }) {
   const setExtractedData = useStore(state => state.setExtractedData);
+  const isVtmePaused = useStore(state => state.isVtmePaused);
+  const toggleVtmePause = useStore(state => state.toggleVtmePause);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [consultantFilter, setConsultantFilter] = useState('');
@@ -220,6 +222,22 @@ export default function MacroTimPanel({ extractedData, handleExtract, handleLaun
           <div className="count-badge-tim">{totalCount} Pedidos</div>
           <button className="btn btn-primary" onClick={() => handleExtract('tim')}>Extrair do App</button>
           <button className="btn btn-primary" onClick={() => handleExtract('vtme_macro')} style={{ background: 'linear-gradient(135deg, #2563EB, #1D4ED8)', color: 'white' }}>Extrair do VTME</button>
+          <button 
+            className="btn" 
+            onClick={toggleVtmePause} 
+            style={{ 
+              background: isVtmePaused ? 'linear-gradient(135deg, #10B981, #059669)' : 'linear-gradient(135deg, #EF4444, #DC2626)', 
+              color: 'white',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '0 12px'
+            }}
+            title={isVtmePaused ? "Liberar robô para executar em background" : "Pausar robô temporariamente para usar o VTME"}
+          >
+            {isVtmePaused ? <Play size={16} /> : <Pause size={16} />}
+            {isVtmePaused ? 'Liberar VTME' : 'Pausar VTME'}
+          </button>
           {isFilterActive ? (
             <>
               <button 
