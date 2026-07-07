@@ -7,8 +7,23 @@ export default function MacroTimPanel({ extractedData, handleExtract, handleLaun
   const setExtractedData = useStore(state => state.setExtractedData);
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [consultantFilter, setConsultantFilter] = useState('');
+  const [supervisorFilter, setSupervisorFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL'); // ALL, PENDING, LAUNCHED
   const [currentPage, setCurrentPage] = useState(1);
+
+  // Extract unique consultants and supervisors for suggestions datalist
+  const uniqueConsultants = Array.from(new Set(
+    (Array.isArray(extractedData) ? extractedData : [])
+      .map(item => item.consultor?.trim())
+      .filter(Boolean)
+  )).sort();
+
+  const uniqueSupervisors = Array.from(new Set(
+    (Array.isArray(extractedData) ? extractedData : [])
+      .map(item => item.supervisor?.trim())
+      .filter(Boolean)
+  )).sort();
   const [pageSize, setPageSize] = useState(10);
 
   // Track currently editing cell: { rowId, field, originalValue }
@@ -95,13 +110,32 @@ export default function MacroTimPanel({ extractedData, handleExtract, handleLaun
 
     if (statusFilter === 'PENDING') return !item.launched;
     if (statusFilter === 'LAUNCHED') return item.launched;
+
+    if (consultantFilter.trim()) {
+      const cFilter = consultantFilter.trim().toLowerCase();
+      if (!item.consultor || !item.consultor.toLowerCase().includes(cFilter)) {
+        return false;
+      }
+    }
+
+    if (supervisorFilter.trim()) {
+      const sFilter = supervisorFilter.trim().toLowerCase();
+      if (!item.supervisor || !item.supervisor.toLowerCase().includes(sFilter)) {
+        return false;
+      }
+    }
+
     return true;
   });
+
+  const filteredPending = filteredOrders.filter(i => !i.launched);
+  const filteredPendingCount = filteredPending.length;
+  const isFilterActive = searchQuery.trim() !== '' || consultantFilter.trim() !== '' || supervisorFilter.trim() !== '';
 
   // Reset page when filter/search changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, statusFilter]);
+  }, [searchQuery, statusFilter, consultantFilter, supervisorFilter]);
 
   // Paginate orders
   const totalItems = filteredOrders.length;
@@ -185,35 +219,108 @@ export default function MacroTimPanel({ extractedData, handleExtract, handleLaun
           <span className="page-title">Macro Tim Vendas</span>
           <div className="count-badge-tim">{totalCount} Pedidos</div>
           <button className="btn btn-primary" onClick={() => handleExtract('tim')}>Extrair do App</button>
-          <button className="btn btn-secondary" onClick={onOpenTokenModal} title="Forçar Login com Token RSA" style={{ padding: '0 12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <LogIn size={16} /> Login
-          </button>
-          <button className="btn btn-primary" onClick={handleAddRow} style={{ background: 'linear-gradient(135deg, #10B981, #059669)', color: 'white' }}>
-            Adicionar Pedido
-          </button>
-          <button className="btn btn-success" onClick={async () => {
-            if (pending.length === 0) {
-              showToast('Não há pedidos novos para lançar na planilha! Todos já estão lá.', 'info');
-              setStatus({ text: '✅ Todos já foram lançados', active: true });
-              return;
-            }
-            await handleLaunchMacro(pending);
-          }}>
-            Lançar na Planilha Macro
-          </button>
+          <button className="btn btn-primary" onClick={() => handleExtract('vtme_macro')} style={{ background: 'linear-gradient(135deg, #2563EB, #1D4ED8)', color: 'white' }}>Extrair do VTME</button>
+          {isFilterActive ? (
+            <>
+              <button 
+                className="btn btn-success" 
+                onClick={async () => {
+                  if (filteredPendingCount === 0) {
+                    showToast('Não há novos pedidos filtrados para lançar!', 'info');
+                    return;
+                  }
+                  await handleLaunchMacro(filteredPending);
+                }}
+                style={{ background: 'linear-gradient(135deg, #10B981, #059669)', color: 'white' }}
+              >
+                Lançar Filtrados ({filteredPendingCount})
+              </button>
+              <button 
+                className="btn btn-secondary" 
+                onClick={async () => {
+                  if (pendingCount === 0) {
+                    showToast('Não há pedidos novos para lançar!', 'info');
+                    return;
+                  }
+                  await handleLaunchMacro(pending);
+                }}
+                style={{ border: '1px dashed var(--primary)', color: 'var(--text)' }}
+                title="Lança todos os pedidos pendentes independente dos filtros aplicados"
+              >
+                Lançar Todos ({pendingCount})
+              </button>
+            </>
+          ) : (
+            <button 
+              className="btn btn-success" 
+              onClick={async () => {
+                if (pendingCount === 0) {
+                  showToast('Não há pedidos novos para lançar na planilha! Todos já estão lá.', 'info');
+                  setStatus({ text: '✅ Todos já foram lançados', active: true });
+                  return;
+                }
+                await handleLaunchMacro(pending);
+              }}
+            >
+              Lançar na Planilha Macro ({pendingCount})
+            </button>
+          )}
         </div>
       </div>
 
       {/* Control Bar: Search & Status Filters */}
       <div className="wa-list-header" style={{ marginBottom: '15px', borderRadius: '10px', display: 'flex', gap: '15px', alignItems: 'center', justifyContent: 'space-between', padding: '10px 20px', background: 'rgba(30, 41, 59, 0.4)', border: '1px solid var(--border)' }}>
-        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
           <input
             className="select-custom"
             placeholder="🔍 Buscar por Cliente, CPF ou Ordem..."
-            style={{ width: '300px' }}
+            style={{ width: '220px' }}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
+          
+          <input
+            list="consultants-list"
+            className="select-custom"
+            placeholder="👔 Filtrar Consultor..."
+            style={{ width: '150px' }}
+            value={consultantFilter}
+            onChange={(e) => setConsultantFilter(e.target.value)}
+          />
+          <datalist id="consultants-list">
+            {uniqueConsultants.map(c => (
+              <option key={c} value={c} />
+            ))}
+          </datalist>
+
+          <input
+            list="supervisors-list"
+            className="select-custom"
+            placeholder="👥 Filtrar Supervisor..."
+            style={{ width: '150px' }}
+            value={supervisorFilter}
+            onChange={(e) => setSupervisorFilter(e.target.value)}
+          />
+          <datalist id="supervisors-list">
+            {uniqueSupervisors.map(s => (
+              <option key={s} value={s} />
+            ))}
+          </datalist>
+
+          {(consultantFilter || supervisorFilter) && (
+            <button
+              className="btn btn-secondary"
+              style={{ padding: '6px 10px', fontSize: '0.7rem', borderRadius: '8px', height: '32px', border: '1px solid rgba(239, 68, 68, 0.5)', color: '#EF4444' }}
+              onClick={() => {
+                setConsultantFilter('');
+                setSupervisorFilter('');
+              }}
+              title="Limpar Filtros de Venda"
+            >
+              Limpar Filtros
+            </button>
+          )}
+
           <div style={{ display: 'flex', gap: '5px' }}>
             <button
               className={`btn ${statusFilter === 'ALL' ? 'btn-primary' : 'btn-secondary'}`}

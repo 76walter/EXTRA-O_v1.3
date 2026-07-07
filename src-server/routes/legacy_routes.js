@@ -591,9 +591,54 @@ app.get('/extract-tim', async (req, res) => {
         if (req.query.processed) {
             try { processedOrders = JSON.parse(req.query.processed); } catch {}
         }
-        const result = await timRPA.extractAuto(processedOrders);
-        res.json(result);
+
+        console.log("🚀 [Paralelismo] Iniciando extração TIM Vendas e consulta VTME em paralelo...");
+
+        // Executa ambos os robôs em paralelo
+        const timPromise = timRPA.extractAuto(processedOrders);
+        const vtmePromise = vtmeRPA.extractAuto().catch(err => {
+            console.error("⚠️ [Paralelismo] Erro na extração paralela do VTME:", err.message);
+            return { success: false, data: [] };
+        });
+
+        const [timResult, vtmeResult] = await Promise.all([timPromise, vtmePromise]);
+
+        // Se a extração do TIM foi bem-sucedida, faz o cruzamento de dados para injetar a Biometria, Consultor e Supervisor do VTME
+        if (timResult.success && Array.isArray(timResult.data)) {
+            const vtmeData = (vtmeResult && Array.isArray(vtmeResult.data)) ? vtmeResult.data : [];
+            console.log(`📊 [Paralelismo] TIM retornou ${timResult.data.length} registros. VTME retornou ${vtmeData.length} registros para cruzamento.`);
+
+            timResult.data = timResult.data.map(timItem => {
+                const cleanTimCPF = timItem.cpf && timItem.cpf !== '--' ? timItem.cpf.replace(/\D/g, '') : '';
+                
+                // Busca registro correspondente no VTME por CPF ou Nome do Cliente
+                const vtmeMatch = vtmeData.find(vtmeItem => {
+                    const cleanVtmeCPF = vtmeItem.cpf && vtmeItem.cpf !== '--' ? vtmeItem.cpf.replace(/\D/g, '') : '';
+                    if (cleanTimCPF && cleanVtmeCPF && cleanTimCPF === cleanVtmeCPF) {
+                        return true;
+                    }
+                    if (timItem.nome && vtmeItem.cliente && timItem.nome.trim().toLowerCase() === vtmeItem.cliente.trim().toLowerCase()) {
+                        return true;
+                    }
+                    return false;
+                });
+
+                if (vtmeMatch) {
+                    console.log(`🎯 [Paralelismo] Correspondência encontrada para ${timItem.nome}. Injetando Biometria: ${vtmeMatch.bio}`);
+                    return {
+                        ...timItem,
+                        bio: vtmeMatch.bio || timItem.bio || '--',
+                        consultor: vtmeMatch.consultor || timItem.consultor || '--',
+                        supervisor: vtmeMatch.supervisor || timItem.supervisor || '--'
+                    };
+                }
+                return timItem;
+            });
+        }
+
+        res.json(timResult);
     } catch (e) {
+        console.error("❌ Erro na rota /extract-tim:", e);
         res.status(500).json({ error: e.message });
     }
 });
@@ -925,6 +970,17 @@ setInterval(() => {
     console.log("♻️ Limpando cache de pedidos processados para re-atualização...");
     processedVTMEOrders.clear();
 }, 300000); 
+
+app.get('/extract-vtme-macro', async (req, res) => {
+    try {
+        console.log("♻️ [VTME] Forçando limpeza de cache para extração manual da Macro...");
+        vtmeRPA.clearCache();
+        const result = await vtmeRPA.extractAuto();
+        res.json(result);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
 
 app.get('/extract-vtme-auto', async (req, res) => {
     try {

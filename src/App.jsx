@@ -290,10 +290,13 @@ function AppMain() {
   // Atualização automática removida a pedido do usuário. A extração ocorrerá apenas ao clicar no botão.
 
   const handleExtract = async (source = 'vtme') => {
-    const endpoint = source === 'vtme' ? '/extract' : '/extract-tim';
-    const isTimExtraction = source === 'tim';
-    const timeoutMs = isTimExtraction ? 300000 : 30000; // 5min para TIM, 30s para VTME
-    setStatus({ text: `🤖 Extraindo ${source.toUpperCase()}... Por favor, aguarde.`, active: true });
+    let endpoint = '/extract';
+    if (source === 'tim') endpoint = '/extract-tim';
+    else if (source === 'vtme_macro') endpoint = '/extract-vtme-macro';
+
+    const isLongExtraction = source === 'tim' || source === 'vtme_macro';
+    const timeoutMs = isLongExtraction ? 300000 : 30000; // 5min para TIM/VTME Macro, 30s para VTME Único
+    setStatus({ text: `🤖 Extraindo ${source === 'vtme_macro' ? 'VTME (Macro)' : source.toUpperCase()}... Por favor, aguarde.`, active: true });
     
     try {
       const response = await apiFetch(endpoint, { signal: AbortSignal.timeout(timeoutMs) });
@@ -320,6 +323,45 @@ function AppMain() {
              });
              
              setStatus({ text: `⚡ Tim Vendas: ${novosCount} novos pedidos identificados`, active: true });
+             return novalista;
+         });
+         return;
+      }
+
+      // Se for VTME Macro, mescla os dados de Biometria, Consultor e Supervisor com a lista de TIM Vendas atual
+      if (source === 'vtme_macro' && dataExtraida.success && Array.isArray(dataExtraida.data)) {
+         setExtractedData(prev => {
+             const novalista = Array.isArray(prev) ? [...prev] : [];
+             let atualizadosCount = 0;
+             
+             dataExtraida.data.forEach(vtmeItem => {
+                 const cleanVtmeCPF = vtmeItem.cpf && vtmeItem.cpf !== '--' ? vtmeItem.cpf.replace(/\D/g, '') : '';
+                 
+                 // Busca registro correspondente na lista pelo CPF ou Nome
+                 const index = novalista.findIndex(old => {
+                     const cleanOldCPF = old.cpf && old.cpf !== '--' ? old.cpf.replace(/\D/g, '') : '';
+                     if (cleanOldCPF && cleanVtmeCPF && cleanOldCPF === cleanVtmeCPF) {
+                         return true;
+                     }
+                     if (old.nome && vtmeItem.cliente && old.nome.trim().toLowerCase() === vtmeItem.cliente.trim().toLowerCase()) {
+                         return true;
+                     }
+                     return false;
+                 });
+
+                 if (index !== -1) {
+                     const oldItem = novalista[index];
+                     novalista[index] = {
+                         ...oldItem,
+                         bio: vtmeItem.bio || oldItem.bio || '--',
+                         consultor: vtmeItem.consultor || oldItem.consultor || '--',
+                         supervisor: vtmeItem.supervisor || oldItem.supervisor || '--'
+                     };
+                     atualizadosCount++;
+                 }
+             });
+             
+             setStatus({ text: `⚡ VTME: ${atualizadosCount} pedidos atualizados com Biometria/Consultor/Supervisor`, active: true });
              return novalista;
          });
          return;
@@ -815,9 +857,22 @@ function AppMain() {
       
       const resData = await response.json();
       
+      const updateLaunchedState = () => {
+        const launchedKeys = new Set(pendentes.map(item => {
+          return (item.ordem && item.ordem !== '--') ? item.ordem : (item.id || item.nome);
+        }));
+        setExtractedData(prev => prev.map(item => {
+          const key = (item.ordem && item.ordem !== '--') ? item.ordem : (item.id || item.nome);
+          if (launchedKeys.has(key)) {
+            return { ...item, launched: true };
+          }
+          return item;
+        }));
+      };
+
       if (response.ok && resData.count === 0) {
         showToast('Não foram adicionados dados novos na tela para serem lançados na Macro acompanhamento.xlsm', 'info');
-        setExtractedData(prev => prev.map(item => ({ ...item, launched: true })));
+        updateLaunchedState();
         setStatus({ text: '✅ Todos os dados já constam lançados', active: true });
         return;
       }
@@ -826,7 +881,7 @@ function AppMain() {
         throw new Error(resData.error || 'Erro ao lançar');
       }
 
-      setExtractedData(prev => prev.map(item => ({ ...item, launched: true })));
+      updateLaunchedState();
       setStatus({ text: `✅ ${resData.count} novos lançados com Sucesso!`, active: true });
     } catch (error) {
       console.error(error);

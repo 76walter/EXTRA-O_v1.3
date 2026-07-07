@@ -5,6 +5,11 @@ let vtmeExtractionTimeout;
 const processedVTMEOrders = new Map(); // checkId -> attemptCount
 
 export class VTMERoboticAutomation {
+    clearCache() {
+        processedVTMEOrders.clear();
+        console.log("♻️ [VTME RPA] Cache de tentativas limpo.");
+    }
+
     async getVTMEPage() {
         const ctx = await initHeadedBrowser();
         const pages = ctx.pages();
@@ -52,20 +57,20 @@ export class VTMERoboticAutomation {
             }
 
             const aguardarCarregamento = await page.evaluate(() => {
-                 const tabs = Array.from(document.querySelectorAll('.tabResponsiva a, md-tab-item, .nav-link'));
-                 const timTab = tabs.find(el => el.innerText && el.innerText.toLowerCase().includes('tim fibra'));
-                 
-                 if (timTab) {
-                     const parentLi = timTab.closest('li');
-                     const isActive = (parentLi && parentLi.classList.contains('active')) || timTab.classList.contains('active');
-                     
-                     if (!isActive) {
-                         console.log("🎯 Clicando na aba Pedidos Tim Fibra...");
-                         timTab.click();
-                         return true; 
-                     }
-                 }
-                 return false;
+                const tabs = Array.from(document.querySelectorAll('tabs ul li a, tabs a, .tabResponsiva a, md-tab-item, .nav-link'));
+                const timTab = tabs.find(el => el.innerText && el.innerText.toLowerCase().includes('tim fibra'));
+                
+                if (timTab) {
+                    const parentLi = timTab.closest('li');
+                    const isActive = (parentLi && parentLi.classList.contains('active')) || timTab.classList.contains('active');
+                    
+                    if (!isActive) {
+                        console.log("🎯 Clicando na aba Pedidos Tim Fibra...");
+                        timTab.click();
+                        return true; 
+                    }
+                }
+                return false;
             });
 
             if (aguardarCarregamento) {
@@ -265,48 +270,69 @@ export class VTMERoboticAutomation {
                                  return "";
                              };
 
-                             const rawConsultor = extractWithFallback(['Consultor', 'Consultor(a)', 'Vendedor']) || "Consultor";
-                             const consultor = rawConsultor.replace('·', '-').split('-')[0].trim();
-                             
-                             const rawSupervisor = extractWithFallback(['Supervisor', 'Supervisor(a)', 'Lider']) || "Supervisor";
-                             const supervisor = rawSupervisor.replace('·', '-').split('-')[0].trim();
+                              // Direct user XPaths first
+                              const xpathBioUser = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[3]/orb-card-v3/div/orb-card-row-v3[4]/div/div[2]/div";
+                              const xpathConsultorUser = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[8]/orb-card-v3/div/orb-card-row-v3[1]/div/div[2]/div";
+                              const xpathSupervisorUser = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[8]/orb-card-v3/div/orb-card-row-v3[2]/div/div[2]/div";
 
-                             
-                             let bio = getVal('Biometria') || getVal('Bio');
-                             if (!bio) {
-                                 // Fallback 1: Buscar elemento que contenha texto Biometria e pegar o próximo elemento com texto
-                                 const modalEl = Array.from(document.querySelectorAll('pedido-tim-fibra-modal, pedido-modal, orb-modal-v3, .modal-content'))
-                                                      .find(el => el.offsetWidth > 0 && el.offsetHeight > 0) || document;
-                                 const allElements = Array.from(modalEl.querySelectorAll('*'));
-                                 const labelEl = allElements.find(el => el.children.length === 0 && (el.innerText || '').trim().toLowerCase().includes('biometria'));
-                                 if (labelEl) {
-                                     // Procura o próximo elemento com texto (pode ser irmão ou estar num contêiner vizinho)
-                                     let current = labelEl;
-                                     while (current && current !== modalEl) {
-                                         let next = current.nextElementSibling;
-                                         if (next && next.innerText && next.innerText.trim() !== '') {
-                                             bio = next.innerText.trim();
-                                             break;
-                                         }
-                                         current = current.parentElement;
-                                     }
-                                 }
-                             }
-                             
-                             if (!bio) {
-                                 // Fallback 2: XPath absoluto
-                                 const xpathBio1 = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[3]/orb-card-v3/div/orb-card-row-v3[4]/div/div[2]/div/span[1]";
-                                 const xpathBio2 = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[3]/orb-card-v3/div/orb-card-row-v3[4]/div/div[2]/div";
-                                 const bioEl = getElementByXPath(xpathBio1) || getElementByXPath(xpathBio2);
-                                 if (bioEl) {
-                                     bio = bioEl.innerText.trim();
-                                 }
-                             }
+                              let bio = "";
+                              let bioEl = getElementByXPath(xpathBioUser) || getElementByXPath(xpathBioUser + "/span");
+                              if (bioEl) {
+                                  bio = bioEl.innerText.trim();
+                              }
+
+                              let consultor = "";
+                              let consultorEl = getElementByXPath(xpathConsultorUser) || getElementByXPath(xpathConsultorUser + "/span");
+                              if (consultorEl) {
+                                  const text = consultorEl.innerText.trim();
+                                  consultor = text.replace('·', '-').split('-')[0].trim();
+                              }
+
+                              let supervisor = "";
+                              let supervisorEl = getElementByXPath(xpathSupervisorUser) || getElementByXPath(xpathSupervisorUser + "/span");
+                              if (supervisorEl) {
+                                  const text = supervisorEl.innerText.trim();
+                                  supervisor = text.replace('·', '-').split('-')[0].trim();
+                              }
+
+                              // Fallbacks for Biometria
+                              if (!bio || bio === '--') {
+                                  bio = getVal('Biometria') || getVal('Bio');
+                                  if (!bio) {
+                                      const modalEl = Array.from(document.querySelectorAll('pedido-tim-fibra-modal, pedido-modal, orb-modal-v3, .modal-content'))
+                                                           .find(el => el.offsetWidth > 0 && el.offsetHeight > 0) || document;
+                                      const allElements = Array.from(modalEl.querySelectorAll('*'));
+                                      const labelEl = allElements.find(el => el.children.length === 0 && (el.innerText || '').trim().toLowerCase().includes('biometria'));
+                                      if (labelEl) {
+                                          let current = labelEl;
+                                          while (current && current !== modalEl) {
+                                              let next = current.nextElementSibling;
+                                              if (next && next.innerText && next.innerText.trim() !== '') {
+                                                  bio = next.innerText.trim();
+                                                  break;
+                                              }
+                                              current = current.parentElement;
+                                          }
+                                      }
+                                  }
+                              }
                              
                              if (bio && bio.toUpperCase().includes('BIOMETRIA')) {
                                  bio = bio.replace(/Biometria:/i, '').replace(/Biometria/i, '').trim();
                              }
                              
+                              // Fallbacks for Consultor
+                              if (!consultor || consultor === 'Consultor' || consultor === 'Não Identificado') {
+                                  const rawConsultor = extractWithFallback(['Consultor', 'Consultor(a)', 'Vendedor']) || "Consultor";
+                                  consultor = rawConsultor.replace('·', '-').split('-')[0].trim();
+                              }
+
+                              // Fallbacks for Supervisor
+                              if (!supervisor || supervisor === 'Supervisor' || supervisor === 'Não Identificado') {
+                                  const rawSupervisor = extractWithFallback(['Supervisor', 'Supervisor(a)', 'Lider']) || "Supervisor";
+                                  supervisor = rawSupervisor.replace('·', '-').split('-')[0].trim();
+                              }
+
                              return { 
                                  cliente, cpf, 
                                  consultor: consultor === 'Consultor' ? 'Não Identificado' : consultor,
@@ -319,10 +345,16 @@ export class VTMERoboticAutomation {
                         };
 
                         const info = extractInfo();
-                        const closeBtn = Array.from(document.querySelectorAll('.modal-footer button, .modal-dialog button, .modal-content button, .modal button, .close, .btn-default, button[title="Fechar"]'))
-                                            .find(b => b.innerText && /FECHAR|VOLTAR|SAIR/i.test(b.innerText.trim()));
-                        if (closeBtn) closeBtn.click();
-                        else document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}));
+                        const closeXpath = '//*[@id="data.id"]/div[1]/div/form-button-group-v3/div/div/form-button-fechar-v3/orb-button-v3/button';
+                        const xpathCloseBtn = getElementByXPath(closeXpath);
+                        if (xpathCloseBtn) {
+                            xpathCloseBtn.click();
+                        } else {
+                            const closeBtn = Array.from(document.querySelectorAll('.modal-footer button, .modal-dialog button, .modal-content button, .modal button, .close, .btn-default, button[title="Fechar"]'))
+                                                .find(b => b.innerText && /FECHAR|VOLTAR|SAIR/i.test(b.innerText.trim()));
+                            if (closeBtn) closeBtn.click();
+                            else document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}));
+                        }
 
                         await new Promise(r => setTimeout(r, 1200));
 
@@ -509,9 +541,11 @@ export class VTMERoboticAutomation {
                 }
 
                 // 2.2 EXTRAÇÃO DIRECIONADA E OBRIGATÓRIA DO CONSULTOR E SUPERVISOR
+                // 2.2 EXTRAÇÃO DIRECIONADA E OBRIGATÓRIA DO CONSULTOR E SUPERVISOR
                 try {
-                    const xpathConsultor = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[8]/orb-card-v3/div/orb-card-row-v3[1]/div/div[2]/div/span";
-                    let consultorEl = getElementByXPath(xpathConsultor);
+                    const xpathConsultorUser = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[8]/orb-card-v3/div/orb-card-row-v3[1]/div/div[2]/div";
+                    const xpathConsultorSpan = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[8]/orb-card-v3/div/orb-card-row-v3[1]/div/div[2]/div/span";
+                    let consultorEl = getElementByXPath(xpathConsultorUser) || getElementByXPath(xpathConsultorSpan);
                     if (consultorEl) {
                         data.consultor = consultorEl.innerText.trim();
                     }
@@ -521,8 +555,9 @@ export class VTMERoboticAutomation {
 
                 // 2.3 EXTRAÇÃO DIRECIONADA DA BIOMETRIA
                 try {
-                    const xpathBioFibra = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[3]/orb-card-v3/div/orb-card-row-v3[4]/div/div[2]/div/span[1]";
-                    let bioEl = getElementByXPath(xpathBioFibra);
+                    const xpathBioUser = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[3]/orb-card-v3/div/orb-card-row-v3[4]/div/div[2]/div";
+                    const xpathBioSpan = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[3]/orb-card-v3/div/orb-card-row-v3[4]/div/div[2]/div/span[1]";
+                    let bioEl = getElementByXPath(xpathBioUser) || getElementByXPath(xpathBioSpan);
                     if (bioEl) {
                         data.bio = bioEl.innerText.trim();
                     } else {
@@ -537,10 +572,10 @@ export class VTMERoboticAutomation {
                     console.error("Erro ao coletar Biometria:", e);
                 }
 
-
                 try {
-                    const xpathSupervisor = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[8]/orb-card-v3/div/orb-card-row-v3[2]/div/div[2]/div/span";
-                    let supervisorEl = getElementByXPath(xpathSupervisor);
+                    const xpathSupervisorUser = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[8]/orb-card-v3/div/orb-card-row-v3[2]/div/div[2]/div";
+                    const xpathSupervisorSpan = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[8]/orb-card-v3/div/orb-card-row-v3[2]/div/div[2]/div/span";
+                    let supervisorEl = getElementByXPath(xpathSupervisorUser) || getElementByXPath(xpathSupervisorSpan);
                     if (supervisorEl) {
                         data.supervisor = supervisorEl.innerText.trim();
                     }
@@ -1086,9 +1121,22 @@ export class VTMERoboticAutomation {
 
             if (modalStatus.action === 'opened_modal') {
                 await page.evaluate(() => {
-                    const closeBtn = Array.from(document.querySelectorAll('.modal-footer button, .modal-dialog button, .modal-content button, .modal button, .close, .btn-default, button[title="Fechar"]'))
-                                        .find(b => b.innerText && /FECHAR|VOLTAR|SAIR/i.test(b.innerText.trim()));
-                    if (closeBtn) closeBtn.click();
+                    const getElementByXPath = (path) => {
+                        try {
+                            return document.evaluate(path, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                        } catch (e) {
+                            return null;
+                        }
+                    };
+                    const closeXpath = '//*[@id="data.id"]/div[1]/div/form-button-group-v3/div/div/form-button-fechar-v3/orb-button-v3/button';
+                    const xpathCloseBtn = getElementByXPath(closeXpath);
+                    if (xpathCloseBtn) {
+                        xpathCloseBtn.click();
+                    } else {
+                        const closeBtn = Array.from(document.querySelectorAll('.modal-footer button, .modal-dialog button, .modal-content button, .modal button, .close, .btn-default, button[title="Fechar"]'))
+                                            .find(b => b.innerText && /FECHAR|VOLTAR|SAIR/i.test(b.innerText.trim()));
+                        if (closeBtn) closeBtn.click();
+                    }
                 });
             }
 
