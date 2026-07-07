@@ -311,6 +311,9 @@ function AppMain() {
       }
       
       const dataExtraida = await response.json();
+      if (dataExtraida && dataExtraida.success === false) {
+        throw new Error(dataExtraida.message || dataExtraida.error || 'Erro na extração');
+      }
       
       // Se for Tim, recebemos uma lista (Array) de registros
       if (source === 'tim' && Array.isArray(dataExtraida.data)) {
