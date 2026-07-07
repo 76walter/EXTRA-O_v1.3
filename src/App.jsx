@@ -300,7 +300,15 @@ function AppMain() {
     
     try {
       const response = await apiFetch(endpoint, { signal: AbortSignal.timeout(timeoutMs) });
-      if (!response.ok) throw new Error('Servidor off');
+      if (!response.ok) {
+        let errorMsg = 'Ligue a Ponte (bridge.js)';
+        try {
+          const errData = await response.json();
+          if (errData && errData.error) errorMsg = errData.error;
+          else if (errData && errData.message) errorMsg = errData.message;
+        } catch (e) {}
+        throw new Error(errorMsg);
+      }
       
       const dataExtraida = await response.json();
       
@@ -436,7 +444,10 @@ function AppMain() {
       }
     } catch (error) {
       console.error('Erro na extração:', error);
-      setStatus({ text: '❌ Erro: Ligue a Ponte (bridge.js)', active: true });
+      const msg = error.message === 'Ligue a Ponte (bridge.js)' || error.message.includes('fetch') || error.message === 'Failed to fetch'
+        ? 'Erro: Ligue a Ponte (bridge.js)' 
+        : `Falha: ${error.message}`;
+      setStatus({ text: `❌ ${msg}`, active: true });
     }
   };
 
