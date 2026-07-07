@@ -90,7 +90,7 @@ export class VTMERoboticAutomation {
             await page.waitForTimeout(2000);
 
             const isActiveTimFibra = await page.evaluate(() => {
-                const activeTabEl = Array.from(document.querySelectorAll('.tabResponsiva li.active a, md-tab-item.md-active, .nav-link.active, .nav-tabs .active, .nav-tabs li.active a'))
+                const activeTabEl = Array.from(document.querySelectorAll('tabs li.active a, tabs a.active, li.active a, a.active, .tabResponsiva li.active a, md-tab-item.md-active, .nav-link.active, .nav-tabs .active, .nav-tabs li.active a'))
                                          .find(el => el.innerText && el.innerText.toLowerCase().includes('tim fibra'));
                 return !!activeTabEl;
             });
