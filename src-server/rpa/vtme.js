@@ -327,6 +327,7 @@ export class VTMERoboticAutomation {
                                    consultor = findValueByLabel('Consultor') || "";
                                }
                                if (consultor) {
+                                   consultor = consultor.replace(/^(Consultor|Consultor\(a\)|Vendedor|Supervisor|Supervisor\(a\)|Lider)\s*:\s*/i, '');
                                    consultor = consultor.replace('·', '-').split('-')[0].trim();
                                }
 
@@ -335,6 +336,7 @@ export class VTMERoboticAutomation {
                                    supervisor = findValueByLabel('Supervisor') || "";
                                }
                                if (supervisor) {
+                                   supervisor = supervisor.replace(/^(Consultor|Consultor\(a\)|Vendedor|Supervisor|Supervisor\(a\)|Lider)\s*:\s*/i, '');
                                    supervisor = supervisor.replace('·', '-').split('-')[0].trim();
                                }
 
@@ -632,9 +634,10 @@ export class VTMERoboticAutomation {
                     if (!consultorVal) {
                         consultorVal = findValueByLabel('Consultor') || "";
                     }
-                    if (consultorVal) {
-                        data.consultor = consultorVal.replace('·', '-').split('-')[0].trim();
-                    }
+                     if (consultorVal) {
+                         consultorVal = consultorVal.replace(/^(Consultor|Consultor\(a\)|Vendedor|Supervisor|Supervisor\(a\)|Lider)\s*:\s*/i, '');
+                         data.consultor = consultorVal.replace('·', '-').split('-')[0].trim();
+                     }
                 } catch (e) {
                     console.error("Erro ao coletar Consultor pelo XPath informado:", e);
                 }
@@ -666,9 +669,10 @@ export class VTMERoboticAutomation {
                     if (!supervisorVal) {
                         supervisorVal = findValueByLabel('Supervisor') || "";
                     }
-                    if (supervisorVal) {
-                        data.supervisor = supervisorVal.replace('·', '-').split('-')[0].trim();
-                    }
+                     if (supervisorVal) {
+                         supervisorVal = supervisorVal.replace(/^(Consultor|Consultor\(a\)|Vendedor|Supervisor|Supervisor\(a\)|Lider)\s*:\s*/i, '');
+                         data.supervisor = supervisorVal.replace('·', '-').split('-')[0].trim();
+                     }
                 } catch (e) {
                     console.error("Erro ao coletar Supervisor pelo XPath informado:", e);
                 }
