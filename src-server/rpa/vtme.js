@@ -270,30 +270,73 @@ export class VTMERoboticAutomation {
                                  return "";
                              };
 
-                              // Direct user XPaths first
-                              const xpathBioUser = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[3]/orb-card-v3/div/orb-card-row-v3[4]/div/div[2]/div";
-                              const xpathConsultorUser = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[8]/orb-card-v3/div/orb-card-row-v3[1]/div/div[2]/div";
-                              const xpathSupervisorUser = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[8]/orb-card-v3/div/orb-card-row-v3[2]/div/div[2]/div";
+                               // Helper functions for dynamic lookups
+                               const findValueByLabel = (lbl) => {
+                                   const modalEl = Array.from(document.querySelectorAll('pedido-tim-fibra-modal, pedido-modal, orb-modal-v3, .modal-content'))
+                                                        .find(el => el.offsetWidth > 0 && el.offsetHeight > 0) || document;
+                                   const cardRows = Array.from(modalEl.querySelectorAll('orb-card-row-v3, .orb-card-row-v3'));
+                                   for (const row of cardRows) {
+                                       const text = (row.innerText || "").trim();
+                                       const strong = row.querySelector('strong, label, b, .orb-card-label');
+                                       if (strong) {
+                                           const strongText = strong.innerText.trim().toLowerCase();
+                                           if (strongText.includes(lbl.toLowerCase())) {
+                                               const valSpan = row.querySelector('span.ng-binding, span, div.col-md-9, div:last-child');
+                                               if (valSpan && valSpan !== strong) {
+                                                   const val = valSpan.innerText.trim();
+                                                   if (val) return val;
+                                               }
+                                               const cleanVal = text.replace(strong.innerText, '').trim();
+                                               if (cleanVal) return cleanVal;
+                                           }
+                                       }
+                                       if (text.toLowerCase().includes(lbl.toLowerCase() + ':') || text.toLowerCase().startsWith(lbl.toLowerCase())) {
+                                           const cleanVal = text.replace(new RegExp(lbl + '\\s*:?', 'i'), '').trim();
+                                           if (cleanVal) return cleanVal;
+                                       }
+                                   }
+                                   return null;
+                               };
 
-                              let bio = "";
-                              let bioEl = getElementByXPath(xpathBioUser) || getElementByXPath(xpathBioUser + "/span");
-                              if (bioEl) {
-                                  bio = bioEl.innerText.trim();
-                              }
+                               const checkXPathValue = (xpath, labelPattern) => {
+                                   const el = getElementByXPath(xpath) || getElementByXPath(xpath + "/span");
+                                   if (el) {
+                                       const val = el.innerText.trim();
+                                       if (labelPattern === 'vendedor') {
+                                           if (val.toLowerCase().includes('contato') || val.toLowerCase().includes('email') || val.includes('@') || /^\d+$/.test(val.replace(/\D/g, ''))) {
+                                               return null;
+                                           }
+                                       }
+                                       return val;
+                                   }
+                                   return null;
+                               };
 
-                              let consultor = "";
-                              let consultorEl = getElementByXPath(xpathConsultorUser) || getElementByXPath(xpathConsultorUser + "/span");
-                              if (consultorEl) {
-                                  const text = consultorEl.innerText.trim();
-                                  consultor = text.replace('·', '-').split('-')[0].trim();
-                              }
+                               // Direct user XPaths first with validation
+                               const xpathBioUser = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[3]/orb-card-v3/div/orb-card-row-v3[4]/div/div[2]/div";
+                               const xpathConsultorUser = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[8]/orb-card-v3/div/orb-card-row-v3[1]/div/div[2]/div";
+                               const xpathSupervisorUser = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[8]/orb-card-v3/div/orb-card-row-v3[2]/div/div[2]/div";
 
-                              let supervisor = "";
-                              let supervisorEl = getElementByXPath(xpathSupervisorUser) || getElementByXPath(xpathSupervisorUser + "/span");
-                              if (supervisorEl) {
-                                  const text = supervisorEl.innerText.trim();
-                                  supervisor = text.replace('·', '-').split('-')[0].trim();
-                              }
+                               let bio = checkXPathValue(xpathBioUser, 'biometria');
+                               if (!bio) {
+                                   bio = findValueByLabel('Biometria') || "";
+                               }
+
+                               let consultor = checkXPathValue(xpathConsultorUser, 'vendedor');
+                               if (!consultor) {
+                                   consultor = findValueByLabel('Consultor') || "";
+                               }
+                               if (consultor) {
+                                   consultor = consultor.replace('·', '-').split('-')[0].trim();
+                               }
+
+                               let supervisor = checkXPathValue(xpathSupervisorUser, 'vendedor');
+                               if (!supervisor) {
+                                   supervisor = findValueByLabel('Supervisor') || "";
+                               }
+                               if (supervisor) {
+                                   supervisor = supervisor.replace('·', '-').split('-')[0].trim();
+                               }
 
                               // Fallbacks for Biometria
                               if (!bio || bio === '--') {
@@ -540,14 +583,57 @@ export class VTMERoboticAutomation {
                     console.error("Erro ao coletar Plano pelo XPath informado:", e);
                 }
 
-                // 2.2 EXTRAÇÃO DIRECIONADA E OBRIGATÓRIA DO CONSULTOR E SUPERVISOR
+                // Helper functions for dynamic lookups
+                const findValueByLabel = (lbl) => {
+                    const modalEl = Array.from(document.querySelectorAll('pedido-tim-fibra-modal, pedido-modal, orb-modal-v3, .modal-content'))
+                                         .find(el => el.offsetWidth > 0 && el.offsetHeight > 0) || document;
+                    const cardRows = Array.from(modalEl.querySelectorAll('orb-card-row-v3, .orb-card-row-v3'));
+                    for (const row of cardRows) {
+                        const text = (row.innerText || "").trim();
+                        const strong = row.querySelector('strong, label, b, .orb-card-label');
+                        if (strong) {
+                            const strongText = strong.innerText.trim().toLowerCase();
+                            if (strongText.includes(lbl.toLowerCase())) {
+                                const valSpan = row.querySelector('span.ng-binding, span, div.col-md-9, div:last-child');
+                                if (valSpan && valSpan !== strong) {
+                                    const val = valSpan.innerText.trim();
+                                    if (val) return val;
+                                }
+                                const cleanVal = text.replace(strong.innerText, '').trim();
+                                if (cleanVal) return cleanVal;
+                            }
+                        }
+                        if (text.toLowerCase().includes(lbl.toLowerCase() + ':') || text.toLowerCase().startsWith(lbl.toLowerCase())) {
+                            const cleanVal = text.replace(new RegExp(lbl + '\\s*:?', 'i'), '').trim();
+                            if (cleanVal) return cleanVal;
+                        }
+                    }
+                    return null;
+                };
+
+                const checkXPathValue = (xpath, labelPattern) => {
+                    const el = getElementByXPath(xpath) || getElementByXPath(xpath + "/span");
+                    if (el) {
+                        const val = el.innerText.trim();
+                        if (labelPattern === 'vendedor') {
+                            if (val.toLowerCase().includes('contato') || val.toLowerCase().includes('email') || val.includes('@') || /^\d+$/.test(val.replace(/\D/g, ''))) {
+                                return null;
+                            }
+                        }
+                        return val;
+                    }
+                    return null;
+                };
+
                 // 2.2 EXTRAÇÃO DIRECIONADA E OBRIGATÓRIA DO CONSULTOR E SUPERVISOR
                 try {
                     const xpathConsultorUser = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[8]/orb-card-v3/div/orb-card-row-v3[1]/div/div[2]/div";
-                    const xpathConsultorSpan = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[8]/orb-card-v3/div/orb-card-row-v3[1]/div/div[2]/div/span";
-                    let consultorEl = getElementByXPath(xpathConsultorUser) || getElementByXPath(xpathConsultorSpan);
-                    if (consultorEl) {
-                        data.consultor = consultorEl.innerText.trim();
+                    let consultorVal = checkXPathValue(xpathConsultorUser, 'vendedor');
+                    if (!consultorVal) {
+                        consultorVal = findValueByLabel('Consultor') || "";
+                    }
+                    if (consultorVal) {
+                        data.consultor = consultorVal.replace('·', '-').split('-')[0].trim();
                     }
                 } catch (e) {
                     console.error("Erro ao coletar Consultor pelo XPath informado:", e);
@@ -556,10 +642,12 @@ export class VTMERoboticAutomation {
                 // 2.3 EXTRAÇÃO DIRECIONADA DA BIOMETRIA
                 try {
                     const xpathBioUser = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[3]/orb-card-v3/div/orb-card-row-v3[4]/div/div[2]/div";
-                    const xpathBioSpan = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[3]/orb-card-v3/div/orb-card-row-v3[4]/div/div[2]/div/span[1]";
-                    let bioEl = getElementByXPath(xpathBioUser) || getElementByXPath(xpathBioSpan);
-                    if (bioEl) {
-                        data.bio = bioEl.innerText.trim();
+                    let bioVal = checkXPathValue(xpathBioUser, 'biometria');
+                    if (!bioVal) {
+                        bioVal = findValueByLabel('Biometria') || "";
+                    }
+                    if (bioVal) {
+                        data.bio = bioVal;
                     } else {
                         // Fallback usando a tag strong
                         const allStrongs = Array.from(document.querySelectorAll('strong'));
@@ -574,10 +662,12 @@ export class VTMERoboticAutomation {
 
                 try {
                     const xpathSupervisorUser = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[8]/orb-card-v3/div/orb-card-row-v3[2]/div/div[2]/div";
-                    const xpathSupervisorSpan = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-tim-fibra-modal/div[2]/pedido-tim-fibra-visualizar/div/div/div[8]/orb-card-v3/div/orb-card-row-v3[2]/div/div[2]/div/span";
-                    let supervisorEl = getElementByXPath(xpathSupervisorUser) || getElementByXPath(xpathSupervisorSpan);
-                    if (supervisorEl) {
-                        data.supervisor = supervisorEl.innerText.trim();
+                    let supervisorVal = checkXPathValue(xpathSupervisorUser, 'vendedor');
+                    if (!supervisorVal) {
+                        supervisorVal = findValueByLabel('Supervisor') || "";
+                    }
+                    if (supervisorVal) {
+                        data.supervisor = supervisorVal.replace('·', '-').split('-')[0].trim();
                     }
                 } catch (e) {
                     console.error("Erro ao coletar Supervisor pelo XPath informado:", e);
