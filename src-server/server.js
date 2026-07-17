@@ -6,7 +6,7 @@ import { initSocketService } from './services/socket.js';
 import { routes as legacyRoutes } from './routes/legacy_routes.js';
 import { whatsappRoutes } from './routes/whatsapp_routes.js';
 import { initHeadedBrowser, closeBrowsers } from './browser/manager.js';
-import { initDatabase } from './database/mariadb.js';
+import { initDatabase, closeDatabase } from './database/database.js';
 import { authRoutes } from './routes/authRoutes.js';
 import { usuarioRoutes } from './routes/usuarioRoutes.js';
 import { authMiddleware } from './middleware/authMiddleware.js';
@@ -60,7 +60,7 @@ initSocketService(httpServer);
 
 const PORT = ENV.PORT || 3001;
 
-// Inicializa o MariaDB antes de iniciar o servidor Express
+// Inicializa o SQLite antes de iniciar o servidor Express
 initDatabase().then(() => {
     httpServer.listen(PORT, async () => {
         console.log(`🚀 Ponte Modular rodando em http://localhost:${PORT}`);
@@ -87,7 +87,7 @@ initDatabase().then(() => {
         }
     });
 }).catch(err => {
-    console.error("❌ Erro fatal ao iniciar banco de dados MariaDB. Servidor parado:", err.message);
+    console.error("❌ Erro fatal ao iniciar banco de dados SQLite. Servidor parado:", err.message);
     process.exit(1);
 });
 
@@ -100,6 +100,7 @@ const gracefulShutdown = async (signal) => {
     } catch (e) {
         console.error('Erro ao fechar navegador:', e.message);
     }
+    closeDatabase();
     console.log('👋 Até logo!');
     process.exit(0);
 };

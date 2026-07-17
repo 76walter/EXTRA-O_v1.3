@@ -51,33 +51,24 @@ export class VTMERoboticAutomation {
 
             if (isLoginPage || hasVisiblePassword) {
                 console.log("⚠️ VTME detectou tela de login...");
-                const settings = loadSettings();
-                await autoLogin(page, settings.vtmeUser, settings.vtmePass);
-                return { success: false, message: 'Realizando Auto-Login no VTME...' };
+                return { success: false, error: 'Por favor, faça login no VTME e selecione a aba "Pedidos Tim Fibra" primeiro.' };
             }
 
-            const aguardarCarregamento = await page.evaluate(() => {
-                const tabs = Array.from(document.querySelectorAll('tabs ul li a, tabs a, .tabResponsiva a, md-tab-item, .nav-link'));
+            const isActiveTimFibra = await page.evaluate(() => {
+                const tabs = Array.from(document.querySelectorAll('tabs ul li a, tabs a, .tabResponsiva a, md-tab-item, .nav-link'))
+                                  .filter(el => !el.closest('nav, header, .main-nav, .top-bar'));
                 const timTab = tabs.find(el => el.innerText && el.innerText.toLowerCase().includes('tim fibra'));
+                if (!timTab) return false;
                 
-                if (timTab) {
-                    const parentLi = timTab.closest('li');
-                    const isActive = (parentLi && parentLi.classList.contains('active')) || timTab.classList.contains('active');
-                    
-                    if (!isActive) {
-                        console.log("🎯 Clicando na aba Pedidos Tim Fibra...");
-                        timTab.click();
-                        return true; 
-                    }
-                }
-                return false;
+                const parentTab = timTab.closest('li, md-tab-item, .nav-item');
+                const isTabActive = timTab.classList.contains('active') || timTab.classList.contains('md-active');
+                const isParentActive = parentTab && (parentTab.classList.contains('active') || parentTab.classList.contains('md-active') || parentTab.getAttribute('aria-selected') === 'true');
+                return !!(isTabActive || isParentActive);
             });
 
-            if (aguardarCarregamento) {
-                console.log("⏳ Aguardando carregamento da aba...");
-                await page.waitForTimeout(4000); 
-            } else {
-                console.log("✅ Já na aba correta ou aba não encontrada.");
+            if (!isActiveTimFibra) {
+                console.log("⏸️ [VTME RPA] Aba 'Pedidos Tim Fibra' não ativa.");
+                return { success: false, error: 'Por favor, abra a aba "Pedidos Tim Fibra" no VTME antes de extrair.' };
             }
 
             await page.evaluate(() => {
@@ -88,17 +79,6 @@ export class VTMERoboticAutomation {
                 }
             });
             await page.waitForTimeout(2000);
-
-            const isActiveTimFibra = await page.evaluate(() => {
-                const activeTabEl = Array.from(document.querySelectorAll('tabs li.active a, tabs a.active, li.active a, a.active, .tabResponsiva li.active a, md-tab-item.md-active, .nav-link.active, .nav-tabs .active, .nav-tabs li.active a'))
-                                         .find(el => el.innerText && el.innerText.toLowerCase().includes('tim fibra'));
-                return !!activeTabEl;
-            });
-
-            if (!isActiveTimFibra) {
-                console.log("⏸️ [VTME RPA] Aba 'Tim Fibra' não está ativa. Pulando extração automática para evitar misturar com corporativo/móvel.");
-                return { success: true, data: [] };
-            }
 
             const jaProcessados = [];
             for (const [checkId, attempts] of processedVTMEOrders.entries()) {
@@ -121,7 +101,15 @@ export class VTMERoboticAutomation {
                 const maxPages = 20; // Limite de 20 páginas (últimos 1000 pedidos)
 
                 while (pagesProcessed < maxPages) {
-                    const getRows = () => Array.from(document.querySelectorAll('table[orb-relatorio-table] tbody tr, table.orb-gr2-table tbody tr, .ui-grid-row'));
+                    const getRows = () => {
+                        let rows = Array.from(document.querySelectorAll('table tbody tr, tr.ng-scope, .ui-grid-row, .ui-grid-render-container tr'))
+                                        .filter(row => row.offsetWidth > 0 && row.offsetHeight > 0);
+                        const activeTab = document.querySelector('tab.active, div.tab-pane.active, md-tab-content.md-active');
+                        if (activeTab) {
+                            rows = rows.filter(row => activeTab.contains(row));
+                        }
+                        return rows;
+                    };
                     const allRows = getRows();
                     console.log(`📊 Página ${pagesProcessed + 1}: ${allRows.length} linhas detectadas.`);
                     
@@ -136,8 +124,11 @@ export class VTMERoboticAutomation {
                         const isHeader = rowText.includes('Cliente') && rowText.includes('CPF') && rowText.includes('Status');
                         if (isHeader || rowText.trim() === "" || rowText.includes('Nenhum registro')) continue;
 
-                        const cpfMatch = rowText.match(/\d{3}\.\d{3}\.\d{3}\-\d{2}/) || rowText.match(/\b\d{11}\b/);
-                        let checkId = cpfMatch ? cpfMatch[0] : null;
+                        const docMatch = rowText.match(/\d{2}\.\d{3}\.\d{3}\/\d{4}\-\d{2}/) || 
+                                         rowText.match(/\d{3}\.\d{3}\.\d{3}\-\d{2}/) || 
+                                         rowText.match(/\b\d{14}\b/) || 
+                                         rowText.match(/\b\d{11}\b/);
+                        let checkId = docMatch ? docMatch[0] : null;
                         if (!checkId) {
                             const cells = Array.from(row.querySelectorAll('td, .ui-grid-cell, div'));
                             if (cells.length > 3) checkId = cells[1].innerText.trim() + cells[3].innerText.trim();
@@ -176,23 +167,41 @@ export class VTMERoboticAutomation {
                         });
 
                         const extractInfo = () => {
-                            let cliente = "Desconhecido";
-                            let cpf = checkId;
-                            let uf = "--";
-                            
-                            const titleEl = document.querySelector('.cv-title');
-                            if (titleEl) {
-                                const fullText = titleEl.innerText.trim();
-                                cliente = fullText.replace(/^[\d\.\-\/]+\s*/, '').trim() || "Desconhecido";
-                            }
-                            
-                            const docEl = document.querySelector('orb-copy-value-v3[orb-type="cnpj"] span.ng-binding, orb-copy-value-v3[orb-type="cpf"] span.ng-binding');
-                            if (docEl) {
-                                cpf = docEl.innerText.trim();
-                            } else if (titleEl) {
-                                const match = titleEl.innerText.match(/^[\d\.\-\/]+/);
-                                if (match) cpf = match[0].trim();
-                            }
+                             let cliente = "Desconhecido";
+                             let cpf = '--';
+                             let cnpj = '--';
+                             let uf = "--";
+                             
+                             const titleEl = document.querySelector('.cv-title');
+                             if (titleEl) {
+                                 const fullText = titleEl.innerText.trim();
+                                 cliente = fullText.replace(/^[\d\.\-\/]+\s*/, '').trim() || "Desconhecido";
+                             }
+                             
+                             const cnpjEl = document.querySelector('orb-copy-value-v3[orb-type="cnpj"] span.ng-binding');
+                             const cpfEl = document.querySelector('orb-copy-value-v3[orb-type="cpf"] span.ng-binding');
+                             
+                             if (cnpjEl) {
+                                 cnpj = cnpjEl.innerText.trim();
+                             }
+                             if (cpfEl) {
+                                 cpf = cpfEl.innerText.trim();
+                             }
+                             
+                             if (cpf === '--' && cnpj === '--') {
+                                 let doc = '';
+                                 if (titleEl) {
+                                     const match = titleEl.innerText.match(/^[\d\.\-\/]+/);
+                                     if (match) doc = match[0].trim();
+                                 }
+                                 if (!doc) doc = checkId || '';
+                                 
+                                 if (doc.replace(/\D/g, '').length > 11) {
+                                     cnpj = doc;
+                                 } else {
+                                     cpf = doc;
+                                 }
+                             }
 
                             const endEl = document.querySelector('orb-icon-v3[name="endereco"]');
                             if (endEl) {
@@ -229,19 +238,42 @@ export class VTMERoboticAutomation {
                                  return "";
                              };
 
-                             if (cliente === "Desconhecido" || cliente === "") {
-                                 const rawCliente = getVal('Cliente') || getVal('Nome') || "Desconhecido";
-                                 cliente = rawCliente.toLowerCase() === 'cliente' ? 'Desconhecido' : rawCliente;
-                             }
+                              if (cliente === "Desconhecido" || cliente === "") {
+                                  const rawCliente = getVal('Cliente') || getVal('Nome') || "Desconhecido";
+                                  cliente = rawCliente.toLowerCase() === 'cliente' ? 'Desconhecido' : rawCliente;
+                              }
 
-                             if (cpf === checkId) {
-                                 const rawCpf = getVal('CPF') || checkId;
-                                 cpf = rawCpf.toLowerCase() === 'cpf' ? checkId : rawCpf;
-                             }
+                              const rawCpfVal = getVal('CPF');
+                              if (rawCpfVal && rawCpfVal.toLowerCase() !== 'cpf') {
+                                  if (rawCpfVal.replace(/\D/g, '').length > 11) {
+                                      cnpj = rawCpfVal;
+                                  } else {
+                                      cpf = rawCpfVal;
+                                  }
+                              }
+                              
+                              const rawCnpjVal = getVal('CNPJ');
+                              if (rawCnpjVal && rawCnpjVal.toLowerCase() !== 'cnpj') {
+                                  if (rawCnpjVal.replace(/\D/g, '').length > 11) {
+                                      cnpj = rawCnpjVal;
+                                  }
+                              }
 
-                             if (uf === "--") {
-                                 uf = document.body.innerText.match(/\/\s*([A-Z]{2})/)?.[1] || "--";
-                             }
+                              if (cpf === '--' && cnpj === '--') {
+                                  cpf = checkId;
+                              }
+
+                              const addressEl = document.querySelector('orb-icon-v3[name="endereco"]');
+                              if (addressEl) {
+                                  const addressRow = addressEl.closest('.orb-card-row-v3');
+                                  if (addressRow) {
+                                      const addressMatch = addressRow.innerText.match(/\/\s*([A-Z]{2})/);
+                                      if (addressMatch) uf = addressMatch[1].trim();
+                                  }
+                              }
+                              if (uf === "--") {
+                                  uf = document.body.innerText.match(/\/\s*([A-Z]{2})/)?.[1] || "--";
+                              }
 
                              const textContent = document.body.innerText.toLowerCase();
                              const isCanc = textContent.includes("cancelamento operação") || textContent.includes("cancelamento operacao");
@@ -353,7 +385,7 @@ export class VTMERoboticAutomation {
                                           while (current && current !== modalEl) {
                                               let next = current.nextElementSibling;
                                               if (next && next.innerText && next.innerText.trim() !== '') {
-                                                  bio = next.innerText.trim();
+                                                  bio = text.innerText.trim();
                                                   break;
                                               }
                                               current = current.parentElement;
@@ -378,15 +410,15 @@ export class VTMERoboticAutomation {
                                   supervisor = rawSupervisor.replace('·', '-').split('-')[0].trim();
                               }
 
-                             return { 
-                                 cliente, cpf, 
-                                 consultor: consultor === 'Consultor' ? 'Não Identificado' : consultor,
-                                 supervisor: supervisor === 'Supervisor' ? 'Não Identificado' : supervisor,
-                                 uf,
-                                 statusCanc: isCanc ? "SOLICITADO" : "PENDENTE",
-                                 bio: bio || '--',
-                                 checkId
-                             };
+                              return { 
+                                  cliente, cpf, cnpj, 
+                                  consultor: consultor === 'Consultor' ? 'Não Identificado' : consultor,
+                                  supervisor: supervisor === 'Supervisor' ? 'Não Identificado' : supervisor,
+                                  uf,
+                                  statusCanc: isCanc ? "SOLICITADO" : "PENDENTE",
+                                  bio: bio || '--',
+                                  checkId
+                              };
                         };
 
                         const info = extractInfo();
@@ -410,15 +442,24 @@ export class VTMERoboticAutomation {
                         }
                     }
 
-                    const paginationBtns = Array.from(document.querySelectorAll('.pagination li a, .pagination button, .pager a'));
-                    const nextBtn = paginationBtns.find(b => b.innerText.trim() === '>' || b.innerText.includes('Próximo') || b.getAttribute('aria-label') === 'Next');
+                    let nextBtn = document.querySelector('a.page-link i.fa-angle-right, a.page-link i.fa-chevron-right')?.closest('a') 
+                               || document.querySelector('a[ng-click*="irParaPagina"][ng-click*="paginaAtual + 1"]')
+                               || document.querySelector('a[ng-click*="paginaAtual + 1"]');
+                    
+                    if (!nextBtn) {
+                        const paginationBtns = Array.from(document.querySelectorAll('.pagination li a, .pagination button, .pager a, a.page-link'));
+                        nextBtn = paginationBtns.find(b => b.innerText.trim() === '>' || b.innerText.includes('Próximo') || b.getAttribute('aria-label') === 'Next' || b.innerHTML.includes('fa-angle-right') || b.innerHTML.includes('fa-chevron-right'));
+                    }
                     
                     if (pagesProcessed > 0 && processedInThisPage === 0) {
                         console.log("🏁 Nenhum pedido novo na página atual. Varredura VTME concluída.");
                         break;
                     }
 
-                    if (nextBtn && !nextBtn.parentElement.classList.contains('disabled') && !nextBtn.hasAttribute('disabled')) {
+                    if (nextBtn && 
+                        !nextBtn.hasAttribute('disabled') && 
+                        !nextBtn.classList.contains('disabled') && 
+                        (!nextBtn.parentElement || !nextBtn.parentElement.classList.contains('disabled'))) {
                         console.log("⏭️ Indo para a próxima página...");
                         nextBtn.click();
                         pagesProcessed++;
@@ -844,28 +885,28 @@ export class VTMERoboticAutomation {
 
                     const xpathTelefone = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-modal/div[2]/pedido-visualizar/div/div/div[7]/pedido-visualizar-pessoas/div/orb-card-v3[1]/div/div/div/div[2]/orb-card-row-v3[2]/div/div[2]/div";
                     const telEl = getElementByXPath(xpathTelefone);
-                    if (telEl && !data.vtme_contato1) {
+                    if (telEl && (!data.vtme_contato1 || !data.vtme_contato2)) {
                         const strongsInternos = telEl.querySelectorAll('strong');
                         if (strongsInternos.length > 0) {
                             strongsInternos.forEach(si => {
                                 if (si.innerText.includes('Contato 1') && si.nextElementSibling) {
                                     const val = si.nextElementSibling.innerText.replace('·', '').trim();
-                                    if (isValidPhoneNumber(val)) data.vtme_contato1 = val;
+                                    if (isValidPhoneNumber(val) && !data.vtme_contato1) data.vtme_contato1 = val;
                                 }
                                 if (si.innerText.includes('Contato 2') && si.nextElementSibling) {
                                     const val = si.nextElementSibling.innerText.replace('·', '').trim();
-                                    if (isValidPhoneNumber(val)) data.vtme_contato2 = val;
+                                    if (isValidPhoneNumber(val) && !data.vtme_contato2) data.vtme_contato2 = val;
                                 }
                             });
                         } else {
                             const spans = telEl.querySelectorAll('span.ng-binding');
                             if (spans.length > 0) {
                                 let telefonesList = Array.from(spans).map(s => s.innerText.replace('·', '').trim()).filter(txt => txt.length > 0 && isValidPhoneNumber(txt));
-                                if (telefonesList[0]) data.vtme_contato1 = telefonesList[0];
-                                if (telefonesList[1]) data.vtme_contato2 = telefonesList[1];
+                                if (telefonesList[0] && !data.vtme_contato1) data.vtme_contato1 = telefonesList[0];
+                                if (telefonesList[1] && !data.vtme_contato2) data.vtme_contato2 = telefonesList[1];
                             } else {
                                 const val = telEl.innerText.trim();
-                                if (isValidPhoneNumber(val)) data.vtme_contato1 = val;
+                                if (isValidPhoneNumber(val) && !data.vtme_contato1) data.vtme_contato1 = val;
                             }
                         }
                     }
@@ -885,6 +926,120 @@ export class VTMERoboticAutomation {
                     }
                 } catch (e) {
                     console.error("Erro na extração de dados alternativos do Representante:", e);
+                }
+
+                // 6.1 FALLBACK ROBUSTO: Busca Contato 1/2 por <strong> em qualquer lugar do modal visível
+                try {
+                    if (!data.vtme_contato1 || !data.vtme_contato2) {
+                        const modalEl = Array.from(document.querySelectorAll('pedido-tim-fibra-modal, pedido-modal, orb-modal-v3, .modal-content'))
+                                             .find(el => el.offsetWidth > 0 && el.offsetHeight > 0) || document;
+                        const allStrongs = Array.from(modalEl.querySelectorAll('strong'));
+                        for (const si of allStrongs) {
+                            const txt = si.innerText.trim();
+                            if (txt.includes('Contato 1') && !data.vtme_contato1) {
+                                const nextSpan = si.nextElementSibling;
+                                if (nextSpan) {
+                                    const val = nextSpan.innerText.replace(/·/g, '').trim();
+                                    if (val && isValidPhoneNumber(val)) data.vtme_contato1 = val;
+                                }
+                            }
+                            if (txt.includes('Contato 2') && !data.vtme_contato2) {
+                                const nextSpan = si.nextElementSibling;
+                                if (nextSpan) {
+                                    const val = nextSpan.innerText.replace(/·/g, '').trim();
+                                    if (val && isValidPhoneNumber(val)) data.vtme_contato2 = val;
+                                }
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error("Erro no fallback de Contato 1/2:", e);
+                }
+
+                // 6.2 FALLBACK ROBUSTO: Busca Email, Nascimento e Mãe por <strong> no pedido-modal
+                try {
+                    const modalEl = Array.from(document.querySelectorAll('pedido-tim-fibra-modal, pedido-modal, orb-modal-v3, .modal-content'))
+                                         .find(el => el.offsetWidth > 0 && el.offsetHeight > 0) || document;
+                    const allStrongs = Array.from(modalEl.querySelectorAll('strong'));
+                    for (const si of allStrongs) {
+                        const txt = si.innerText.trim().replace(':', '').trim().toUpperCase();
+
+                        // Email
+                        if (txt === 'E-MAIL' || txt === 'EMAIL') {
+                            const nextSpan = si.nextElementSibling;
+                            if (nextSpan) {
+                                const val = nextSpan.innerText.trim();
+                                if (val && val.includes('@')) data.email = val;
+                            }
+                        }
+
+                        // Data de Nascimento
+                        if (txt === 'DATA DE NASCIMENTO' || txt === 'NASCIMENTO' || txt === 'NASC' || txt === 'DATA DE NASC.') {
+                            const nextSpan = si.nextElementSibling;
+                            if (nextSpan) {
+                                const val = nextSpan.innerText.trim();
+                                if (val && /\d{2}\/\d{2}\/\d{4}/.test(val)) {
+                                    data.data_nascimento = val.match(/\d{2}\/\d{2}\/\d{4}/)[0];
+                                }
+                            }
+                        }
+
+                        // Nome da Mãe
+                        if (txt === 'NOME DA MÃE' || txt === 'NOME DA MAE' || txt === 'MÃE' || txt === 'MAE') {
+                            const nextSpan = si.nextElementSibling;
+                            if (nextSpan) {
+                                const val = nextSpan.innerText.trim();
+                                // Só aceita se NÃO parecer endereço/CEP
+                                if (val && val.length > 2 && !val.match(/CEP|^\d{5}/) && !val.match(/\/\s*[A-Z]{2}\s*$/)) {
+                                    data.nome_mae = val;
+                                }
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error("Erro no fallback de Email/Nascimento/Mãe:", e);
+                }
+
+                // 6.3 FALLBACK ROBUSTO: Representante / Responsável em pedido-modal
+                try {
+                    const pessoasContainer = document.querySelector('pedido-visualizar-pessoas');
+                    if (pessoasContainer) {
+                        const firstCard = pessoasContainer.querySelector('orb-card-v3, .orb-card-v3');
+                        if (firstCard) {
+                            const rows = Array.from(firstCard.querySelectorAll('orb-card-row-v3, .orb-card-row-v3'));
+                            rows.forEach(row => {
+                                const text = (row.innerText || "").trim();
+                                if (!text) return;
+                                
+                                const labelEl = row.querySelector('strong, label, b, .orb-card-label');
+                                const labelText = labelEl ? labelEl.innerText.trim().toUpperCase() : "";
+                                const valEl = row.querySelector('span.ng-binding, span, div.col-md-9, div:last-child');
+                                let val = valEl ? valEl.innerText.trim() : "";
+                                
+                                if (!val) {
+                                    val = text.replace(labelText, '').replace(/^[:\s\-\·\•\s]+/, '').trim();
+                                }
+                                
+                                const icon = row.getAttribute('orb-icon') || "";
+                                
+                                if (labelText.includes('NOME') || text.toUpperCase().startsWith('NOME:')) {
+                                    if (val && !data.cnpj_nome_rep) data.cnpj_nome_rep = val;
+                                }
+                                else if (labelText.includes('CPF') || text.toUpperCase().startsWith('CPF:') || icon === 'cpf') {
+                                    const cleanCPF = val.replace(/\D/g, '');
+                                    if (cleanCPF.length === 11 && !data.cnpj_cpf_rep) data.cnpj_cpf_rep = val;
+                                }
+                                else if (labelText.includes('EMAIL') || labelText.includes('E-MAIL') || text.toUpperCase().startsWith('EMAIL:') || icon === 'email' || val.includes('@')) {
+                                    if (val && !data.cnpj_email_rep) data.cnpj_email_rep = val;
+                                }
+                                else if (labelText.includes('NASCIMENTO') || labelText.includes('DATA DE') || text.toUpperCase().startsWith('DATA') || icon === 'calendario') {
+                                    if (val && !data.cnpj_nasc_rep) data.cnpj_nasc_rep = val;
+                                }
+                            });
+                        }
+                    }
+                } catch (e) {
+                    console.error("Erro no fallback de pedido-visualizar-pessoas:", e);
                 }
 
                 // EXTRAÇÃO EXCLUSIVA DO NOME FANTASIA (CARD 4)
@@ -1067,21 +1222,25 @@ export class VTMERoboticAutomation {
                     }
                 });
 
-                const pageText = document.body.innerText;
+                // Busca o modal ativo para restringir a busca de texto apenas aos dados do contrato atual (evita pegar dados de outros clientes do grid em segundo plano)
+                const modalEl = Array.from(document.querySelectorAll('pedido-tim-fibra-modal, pedido-modal, orb-modal-v3, .modal-content'))
+                                     .find(el => el.offsetWidth > 0 && el.offsetHeight > 0) || document.body;
+                const modalText = modalEl.innerText;
+
                 if (!data.cnpj) {
-                    const cnpjMatch = pageText.match(/\d{2}\.\d{3}\.\d{3}\/\d{4}\-\d{2}/) || pageText.match(/\b\d{14}\b/);
+                    const cnpjMatch = modalText.match(/\d{2}\.\d{3}\.\d{3}\/\d{4}\-\d{2}/) || modalText.match(/\b\d{14}\b/);
                     if (cnpjMatch) data.cnpj = cnpjMatch[0];
                 }
 
                 if (!data.uf) {
-                    const ufMatch = pageText.match(/[\/\-]\s*([A-Z]{2})\s*$/m) || pageText.match(/[\/\-]\s*([A-Z]{2})\b/);
+                    const ufMatch = modalText.match(/[\/\-]\s*([A-Z]{2})\s*$/m) || modalText.match(/[\/\-]\s*([A-Z]{2})\b/);
                     if (ufMatch) data.uf = ufMatch[1].toUpperCase().trim();
                 }
 
                 // --- POS-PROCESSAMENTO E VALIDACAO CPF VS CNPJ ---
                 if (data.cpf_cliente) {
                     const cleanDoc = data.cpf_cliente.replace(/\D/g, '');
-                    if (cleanDoc.length === 14) {
+                    if (cleanDoc.length > 11) {
                         data.cnpj = data.cpf_cliente;
                         data.cpf_cliente = "";
                     }
@@ -1178,7 +1337,8 @@ export class VTMERoboticAutomation {
                 const hasCnpj = data.cnpj && data.cnpj.replace(/\D/g, '').length > 0;
                 if (hasCnpj) {
                     finalCNPJ = data.cnpj;
-                    finalCPF = data.cnpj_cpf_rep || data.cpf_cliente || "";
+                    const cpfCandidate = data.cnpj_cpf_rep || data.cpf_cliente || "";
+                    finalCPF = cpfCandidate.replace(/\D/g, '').length > 11 ? "" : cpfCandidate;
                 } else {
                     finalCPF = data.cpf_cliente || "";
                     finalCNPJ = "este cliente é pessoa fisica (PF)";
@@ -1200,6 +1360,11 @@ export class VTMERoboticAutomation {
                     consultora: data.consultor || "",
                     supervisor: data.supervisor || "",
                     protocolo: data.protocolo || "",
+                    nome_fantasia: data.nome_fantasia || "",
+                    cnpj_nome_rep: data.cnpj_nome_rep || data.admin_nome || "",
+                    cnpj_cpf_rep: data.cnpj_cpf_rep || (finalCNPJ !== "este cliente é pessoa fisica (PF)" ? finalCPF : "") || "",
+                    cnpj_email_rep: data.cnpj_email_rep || data.admin_email || "",
+                    cnpj_nasc_rep: data.cnpj_nasc_rep || data.smb_nasc_rep || "",
                     bio: data.bio || "--"
                 };
             });

@@ -198,6 +198,7 @@ function AppMain() {
   // Planilhas Management State
   const [waSheets, setWaSheets] = useLocalStorageState('wa_sheets', { GERAL: '' });
   const [activeSheet, setActiveSheet] = useState(Object.keys(waSheets)[0] || 'GERAL');
+  const [macroSheetUrl, setMacroSheetUrl] = useLocalStorageState('macro_sheet_url', 'https://excel.cloud.microsoft/open/onedrive/?docId=D7954F0A2A4EFE88%21s2528d66f763f4b8da594141c18e1da1c&driveId=D7954F0A2A4EFE88');
   const [isSheetModalOpen, setIsSheetModalOpen] = useState(false);
   const [sheetModalActive, setSheetModalActive] = useState('');
   const [sheetFormName, setSheetFormName] = useState('');
@@ -293,10 +294,14 @@ function AppMain() {
     let endpoint = '/extract';
     if (source === 'tim') endpoint = '/extract-tim';
     else if (source === 'vtme_macro') endpoint = '/extract-vtme-macro';
+    else if (source === 'vtme_auto') endpoint = '/extract-vtme-auto';
 
-    const isLongExtraction = source === 'tim' || source === 'vtme_macro';
-    const timeoutMs = isLongExtraction ? 300000 : 30000; // 5min para TIM/VTME Macro, 30s para VTME Único
-    setStatus({ text: `🤖 Extraindo ${source === 'vtme_macro' ? 'VTME (Macro)' : source.toUpperCase()}... Por favor, aguarde.`, active: true });
+    const isLongExtraction = source === 'tim' || source === 'vtme_macro' || source === 'vtme_auto';
+    const timeoutMs = isLongExtraction ? 1800000 : 30000; // 30min para TIM/VTME Macro/Auto, 30s para VTME Único
+    
+    let displaySource = source.toUpperCase();
+    if (source === 'vtme_macro' || source === 'vtme_auto') displaySource = 'VTME (Macro)';
+    setStatus({ text: `🤖 Extraindo ${displaySource}... Por favor, aguarde.`, active: true });
     
     try {
       const response = await apiFetch(endpoint, { signal: AbortSignal.timeout(timeoutMs) });
@@ -378,11 +383,23 @@ function AppMain() {
          return;
       }
 
+      if (source === 'vtme_auto') {
+         setStatus({ text: `✅ VTME: Extração Concluída. ${dataExtraida.data?.length || 0} pedidos sincronizados`, active: true });
+         return;
+      }
+
       // Padronização para VTME (Registro único)
+      const isCnpj = (dataExtraida.cnpj_cliente && dataExtraida.cnpj_cliente.replace(/\D/g, '').length > 11) || 
+                     (dataExtraida.cpf_cliente && dataExtraida.cpf_cliente.replace(/\D/g, '').length > 11);
+      const cleanCpf = dataExtraida.cpf_cliente && dataExtraida.cpf_cliente.replace(/\D/g, '').length === 11 ? dataExtraida.cpf_cliente : '--';
+      const cleanCnpj = dataExtraida.cnpj_cliente && dataExtraida.cnpj_cliente.replace(/\D/g, '').length > 11 ? dataExtraida.cnpj_cliente : '--';
       const normalizedData = source === 'vtme' ? {
         ...dataExtraida,
         nome: dataExtraida.nome_cliente,
-        cpf: dataExtraida.cpf_cliente,
+        cpf: isCnpj ? cleanCpf : dataExtraida.cpf_cliente,
+        cnpj: isCnpj ? cleanCnpj : '--',
+        cpf_cliente: isCnpj ? cleanCpf : dataExtraida.cpf_cliente,
+        cnpj_cliente: isCnpj ? cleanCnpj : 'este cliente é pessoa fisica (PF)',
         ordem: dataExtraida.ordem || '--',
         datainst: dataExtraida.datainst || '--',
         statusinst: dataExtraida.statusinst || '--'
@@ -391,7 +408,8 @@ function AppMain() {
         nome_cliente: dataExtraida.data.nome,
         cpf_cliente: dataExtraida.data.cpf,
         plano: dataExtraida.data.status,
-        extractedFrom: 'tim'
+        extractedFrom: 'tim',
+        cnpj: '--'
       };
 
       setExtractedData(normalizedData);
@@ -418,8 +436,11 @@ function AppMain() {
              if (normalizedData.bio && (!updated[existingIndex].bio || updated[existingIndex].bio === '--')) {
                  updated[existingIndex] = { ...updated[existingIndex], bio: normalizedData.bio };
              }
-             if (normalizedData.cpf && !updated[existingIndex].cpf) {
+             if (normalizedData.cpf && normalizedData.cpf !== '--' && (!updated[existingIndex].cpf || updated[existingIndex].cpf === '--')) {
                  updated[existingIndex] = { ...updated[existingIndex], cpf: normalizedData.cpf };
+             }
+             if (normalizedData.cnpj && normalizedData.cnpj !== '--' && (!updated[existingIndex].cnpj || updated[existingIndex].cnpj === '--')) {
+                 updated[existingIndex] = { ...updated[existingIndex], cnpj: normalizedData.cnpj };
              }
              return updated;
           } else {
@@ -428,7 +449,8 @@ function AppMain() {
                data: new Date().toLocaleDateString('pt-BR'),
                hora: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
                cliente: clientName,
-               cpf: normalizedData.cpf || '',
+               cpf: normalizedData.cpf || '--',
+               cnpj: normalizedData.cnpj || '--',
                uf: normalizedData.uf || '--',
                bio: normalizedData.bio || '--',
                consultor: normalizedData.consultora || normalizedData.consultor || vendedor || 'Consultor',
@@ -451,6 +473,25 @@ function AppMain() {
         ? 'Erro: Ligue a Ponte (bridge.js)' 
         : `Falha: ${error.message}`;
       setStatus({ text: `❌ ${msg}`, active: true });
+    }
+  };
+
+  const handleClearDashboard = async () => {
+    try {
+      // 1. Limpa os dados do frontend no Zustand
+      useStore.setState({ logs: [], vendasHoje: 0, cancelamentosHoje: 0 });
+      
+      // 2. Limpa o cache do robô no backend
+      const response = await apiFetch('/clear-vtme-cache', { method: 'POST' });
+      if (response.ok) {
+        showToast('♻️ Dashboard e cache do robô limpos com sucesso!', 'success');
+        setStatus({ text: '✅ Dashboard e cache do robô limpos', active: true });
+      } else {
+        throw new Error('Falha ao limpar cache do servidor');
+      }
+    } catch (error) {
+      console.error(error);
+      showToast('❌ Erro ao limpar cache do servidor', 'error');
     }
   };
 
@@ -865,7 +906,7 @@ function AppMain() {
     try {
       const response = await apiFetch('/macro-tim', {
         method: 'POST',
-        body: JSON.stringify({ data: pendentes }),
+        body: JSON.stringify({ data: pendentes, sheetUrl: macroSheetUrl }),
         signal: AbortSignal.timeout(60000)
       });
       
@@ -1076,6 +1117,8 @@ function AppMain() {
                   vendasHoje={vendasHoje}
                   cancelamentosHoje={cancelamentosHoje}
                   bridgeHealth={bridgeHealth}
+                  handleExtract={handleExtract}
+                  handleClearDashboard={handleClearDashboard}
                 />
               </motion.div>
             )}
@@ -1097,6 +1140,8 @@ function AppMain() {
                   handleLaunchMacro={handleLaunchMacro}
                   setStatus={setStatus}
                   onOpenTokenModal={() => setIsTokenModalOpen(true)}
+                  macroSheetUrl={macroSheetUrl}
+                  setMacroSheetUrl={setMacroSheetUrl}
                 />
               </motion.div>
             )}

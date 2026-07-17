@@ -17,3 +17,19 @@ documentação.md
 planilha.xlsx
 MACRO APP 2026.xlsm
 .env
+
+# Banco de dados local SQLite
+extracao_sistema.db
+*.db
+
+# Arquivo temporário de status/pedidos
+launched_tim_orders.json
+
+# Builds de distribuição/release
+release/
+
+# Planilhas de dados locais
+PARCELAMENTO.xlsx
+
+# Rascunhos locais
+scratch/

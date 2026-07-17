@@ -68,10 +68,15 @@ export const guessUfFromPhone = (phone) => {
 };
 
 export const buildTemplatePreview = (template, data = {}, vendedor = '') => {
+  const rawCpf = data.cpf_cliente || data.cpf || '';
+  const isCnpj = rawCpf.replace(/\D/g, '').length > 11;
+  const cpfVal = isCnpj ? '--' : rawCpf;
+  const cnpjVal = isCnpj ? rawCpf : (data.cnpj_cliente || data.cnpj || '');
+
   const replacements = {
     nome_cliente: data.nome_cliente || data.nome || '',
-    cpf_cliente: data.cpf_cliente || data.cpf || '',
-    cnpj_cliente: data.cnpj_cliente || '',
+    cpf_cliente: cpfVal,
+    cnpj_cliente: cnpjVal,
     consultora: data.consultora || vendedor || '',
     supervisor: data.supervisor || '',
     uf: data.uf || guessUfFromPhone(data.tel || data.tel1 || ''),

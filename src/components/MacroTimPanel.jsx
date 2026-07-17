@@ -1,13 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Zap, ChevronLeft, ChevronRight, LogIn, Play, Pause, RefreshCw } from 'lucide-react';
+import { Zap, ChevronLeft, ChevronRight } from 'lucide-react';
 import { showToast } from './Toast';
 import { useStore } from '../store';
 
-export default function MacroTimPanel({ extractedData, handleExtract, handleLaunchMacro, setStatus, onOpenTokenModal }) {
+export default function MacroTimPanel({ extractedData, handleExtract, handleLaunchMacro, setStatus, onOpenTokenModal, macroSheetUrl, setMacroSheetUrl }) {
   const setExtractedData = useStore(state => state.setExtractedData);
-  const isVtmePaused = useStore(state => state.isVtmePaused);
-  const toggleVtmePause = useStore(state => state.toggleVtmePause);
-  const unlockRobots = useStore(state => state.unlockRobots);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [consultantFilter, setConsultantFilter] = useState('');
@@ -222,44 +219,6 @@ export default function MacroTimPanel({ extractedData, handleExtract, handleLaun
           <span className="page-title">Macro Tim Vendas</span>
           <div className="count-badge-tim">{totalCount} Pedidos</div>
           <button className="btn btn-primary" onClick={() => handleExtract('tim')}>Extrair do App</button>
-          <button className="btn btn-primary" onClick={() => handleExtract('vtme_macro')} style={{ background: 'linear-gradient(135deg, #2563EB, #1D4ED8)', color: 'white' }}>Extrair do VTME</button>
-          <button 
-            className="btn" 
-            onClick={toggleVtmePause} 
-            style={{ 
-              background: isVtmePaused ? 'linear-gradient(135deg, #10B981, #059669)' : 'linear-gradient(135deg, #EF4444, #DC2626)', 
-              color: 'white',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '0 12px'
-            }}
-            title={isVtmePaused ? "Liberar robô para executar em background" : "Pausar robô temporariamente para usar o VTME"}
-          >
-            {isVtmePaused ? <Play size={16} /> : <Pause size={16} />}
-            {isVtmePaused ? 'Liberar VTME' : 'Pausar VTME'}
-          </button>
-          <button 
-            className="btn btn-secondary" 
-            onClick={async () => {
-              const ok = await unlockRobots();
-              if (ok) {
-                showToast('Robôs destravados com sucesso! O VTME foi pausado.', 'success');
-              } else {
-                showToast('Falha ao destravar robôs.', 'error');
-              }
-            }}
-            style={{ 
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '0 12px'
-            }}
-            title="Destravar os robôs caso fiquem travados como Ocupados"
-          >
-            <RefreshCw size={16} />
-            Destravar Robô
-          </button>
           {isFilterActive ? (
             <>
               <button 
@@ -305,6 +264,39 @@ export default function MacroTimPanel({ extractedData, handleExtract, handleLaun
               Lançar na Planilha Macro ({pendingCount})
             </button>
           )}
+        </div>
+      </div>
+
+      {/* Barra de Planilha Macro */}
+      <div className="secondary-toolbar" style={{
+        background: '#0F172A',
+        borderBottom: '1px solid #1E293B',
+        padding: '8px 20px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: '20px',
+        marginBottom: '15px',
+        borderRadius: '10px',
+        border: '1px solid var(--border)'
+      }}>
+        <div className="action-group" style={{ display: 'flex', gap: '10px', alignItems: 'center', width: '100%' }}>
+          <span style={{ fontSize: '0.7rem', color: '#94A3B8', fontWeight: 'bold', whiteSpace: 'nowrap' }}>PLANILHA DE DESTINO:</span>
+          <input
+            type="text"
+            className="select-custom"
+            style={{ height: '30px', flex: 1, fontSize: '0.75rem', padding: '0 12px' }}
+            value={macroSheetUrl || ''}
+            onChange={(e) => setMacroSheetUrl(e.target.value)}
+            placeholder="Cole aqui o link do OneDrive da planilha Macro..."
+          />
+          <button 
+            className="btn btn-secondary" 
+            style={{ height: '30px', padding: '0 12px', display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.75rem', whiteSpace: 'nowrap' }} 
+            onClick={() => window.open(macroSheetUrl || 'https://onedrive.live.com/', '_blank')}
+          >
+            Abrir Planilha 🔗
+          </button>
         </div>
       </div>
 

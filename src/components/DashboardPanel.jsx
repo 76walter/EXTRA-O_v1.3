@@ -12,7 +12,9 @@ const DashboardPanel = memo(function DashboardPanel({
   vendedor,
   vendasHoje,
   cancelamentosHoje,
-  bridgeHealth
+  bridgeHealth,
+  handleExtract,
+  handleClearDashboard
 }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -153,7 +155,54 @@ const DashboardPanel = memo(function DashboardPanel({
         style={{ display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 150px)' }}
       >
         <div className="wa-list-header" style={{ flexShrink: 0 }}>
-          <span className="wa-list-title"><History size={16} /> Histórico de Lançamentos do Dia</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+            <span className="wa-list-title"><History size={16} /> Histórico de Lançamentos do Dia</span>
+            <button 
+              className="btn btn-primary" 
+              onClick={() => handleExtract('vtme_auto')}
+              style={{ 
+                background: 'linear-gradient(135deg, #2563EB, #1D4ED8)', 
+                color: 'white', 
+                border: 'none', 
+                padding: '6px 16px', 
+                borderRadius: '8px', 
+                fontSize: '0.8rem', 
+                fontWeight: 'bold', 
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              Extrair do VTME
+            </button>
+            <button 
+              className="btn" 
+              onClick={handleClearDashboard}
+              style={{ 
+                background: 'rgba(239, 68, 68, 0.1)', 
+                color: '#EF4444', 
+                border: '1px solid rgba(239, 68, 68, 0.4)', 
+                padding: '6px 16px', 
+                borderRadius: '8px', 
+                fontSize: '0.8rem', 
+                fontWeight: 'bold', 
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                transition: 'all 0.2s'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)';
+              }}
+            >
+              🗑️ Limpar Tela
+            </button>
+          </div>
           <input
             className="select-custom"
             placeholder="🔍 Buscar Consultor ou Supervisor..."
@@ -170,8 +219,11 @@ const DashboardPanel = memo(function DashboardPanel({
                 <th>HORA</th>
                 <th>V</th>
                 <th>CANCELAMENTO</th>
-                <th>CLIENTE</th>
                 <th>UF</th>
+                <th>CLIENTE</th>
+                <th>CNPJ</th>
+                <th>CPF</th>
+                <th>BIOMETRIA</th>
                 <th>CONSULTOR</th>
                 <th>SUPERVISOR</th>
               </tr>
@@ -180,11 +232,11 @@ const DashboardPanel = memo(function DashboardPanel({
               <AnimatePresence mode='popLayout'>
                 {bridgeHealth?.status !== 'ok' && filteredLogs.length === 0 ? (
                   <>
-                    <TableRowSkeleton columns={8} />
-                    <TableRowSkeleton columns={8} />
-                    <TableRowSkeleton columns={8} />
-                    <TableRowSkeleton columns={8} />
-                    <TableRowSkeleton columns={8} />
+                    <TableRowSkeleton columns={11} />
+                    <TableRowSkeleton columns={11} />
+                    <TableRowSkeleton columns={11} />
+                    <TableRowSkeleton columns={11} />
+                    <TableRowSkeleton columns={11} />
                   </>
                 ) : paginatedLogs.length > 0 ? (
                   paginatedLogs.map((log, index) => (
@@ -213,15 +265,18 @@ const DashboardPanel = memo(function DashboardPanel({
                           {log.statusCanc}
                         </span>
                       </td>
-                      <td>{log.cliente}</td>
                       <td>{log.uf}</td>
+                      <td>{log.cliente}</td>
+                      <td>{log.cnpj || '--'}</td>
+                      <td>{log.cpf || '--'}</td>
+                      <td>{log.bio || '--'}</td>
                       <td>{log.consultor}</td>
                       <td>{log.supervisor}</td>
                     </motion.tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan="8" style={{ padding: '30px', textAlign: 'center', color: 'var(--text-dim)' }}>
+                    <td colSpan="11" style={{ padding: '30px', textAlign: 'center', color: 'var(--text-dim)' }}>
                       Nenhum lançamento encontrado para a busca.
                     </td>
                   </tr>

@@ -7,6 +7,102 @@ import { loadMasks, saveMasks, loadSettings, saveSettings } from '../utils/stora
 import { ENV } from '../config/env.js';
 import { timRPA } from '../rpa/tim.js';
 import { vtmeRPA } from '../rpa/vtme.js';
+import { emitVtmeData } from '../services/socket.js';
+import XLSX from 'xlsx';
+
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// ─── BUSCA VENCIMENTO NO PARCELAMENTO.xlsx ──────────────────────────────────
+// Busca TODAS as linhas que batem com o CPF/CNPJ na coluna A,
+// extrai coluna G (data vencimento) e coluna H (valor da fatura),
+// e retorna no formato: "07/05/2026 = R$ 4,23" (uma linha por fatura)
+const PARCELAMENTO_FILE = path.join(__dirname, '../../PARCELAMENTO.xlsx');
+
+const buscarVencimentoNoParcelamento = (documento) => {
+    try {
+        if (!documento) return '';
+        const docLimpo = documento.replace(/\D/g, '');
+        if (docLimpo.length < 6) return '';
+
+        if (!fs.existsSync(PARCELAMENTO_FILE)) {
+            console.warn('⚠️ PARCELAMENTO.xlsx não encontrada em:', PARCELAMENTO_FILE);
+            return '';
+        }
+
+        const workbook = XLSX.readFile(PARCELAMENTO_FILE);
+        const resultados = [];
+
+        // Padroniza o documento para matching flexível (pad com zeros à esquerda)
+        const docPadded = docLimpo.padStart(11, '0');
+
+        // Busca em TODAS as abas (JUNHO-JULHO e MARÇO-MAIO)
+        for (const sheetName of workbook.SheetNames) {
+            const sheet = workbook.Sheets[sheetName];
+            const dados = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: true });
+
+            for (let i = 1; i < dados.length; i++) {
+                const linha = dados[i];
+                if (!linha[0]) continue;
+
+                const cellVal = String(linha[0]).replace(/\D/g, '');
+                if (!cellVal) continue;
+
+                // Matching flexível (igual à extensão): exato, includes ou padded
+                const cellPadded = cellVal.padStart(11, '0');
+                const isMatch = (cellVal === docLimpo) ||
+                                (cellPadded === docPadded) ||
+                                (cellVal.includes(docLimpo)) ||
+                                (docLimpo.includes(cellVal) && cellVal.length >= 6);
+
+                if (isMatch) {
+                    const colG = linha[6]; // Coluna G — VENCIMENTO FATURA
+                    const colH = linha[7]; // Coluna H — VALOR DA FATURA(S)
+
+                    // Formata data da coluna G
+                    let dataFormatada = '';
+                    if (colG !== '' && colG !== undefined && colG !== null) {
+                        if (typeof colG === 'number') {
+                            const d = XLSX.SSF.parse_date_code(colG);
+                            dataFormatada = `${String(d.d).padStart(2,'0')}/${String(d.m).padStart(2,'0')}/${d.y}`;
+                        } else {
+                            dataFormatada = String(colG).trim();
+                        }
+                    }
+
+                    // Formata valor da coluna H (formato igual à extensão: R$  valor)
+                    let valorFormatado = '';
+                    if (colH !== '' && colH !== undefined && colH !== null) {
+                        if (typeof colH === 'number') {
+                            valorFormatado = `R$  ${colH.toFixed(2).replace('.', ',')}`;
+                        } else {
+                            valorFormatado = String(colH).replace('.', ',').trim();
+                            if (!valorFormatado.toUpperCase().includes('R$') && /\d/.test(valorFormatado)) {
+                                valorFormatado = `R$  ${valorFormatado}`;
+                            }
+                        }
+                    }
+
+                    if (dataFormatada || valorFormatado) {
+                        resultados.push(`${dataFormatada}   =   ${valorFormatado}`.trim());
+                    }
+                }
+            }
+        }
+
+        if (resultados.length > 0) {
+            console.log(`📊 Parcelamento: ${resultados.length} fatura(s) encontrada(s) para [${documento}]`);
+            return resultados.join('\n');
+        }
+        console.log(`📊 Parcelamento: documento [${documento}] NÃO encontrado em nenhuma aba.`);
+        return '';
+    } catch (e) {
+        console.error('❌ Erro ao buscar vencimento no PARCELAMENTO.xlsx:', e.message);
+        return '';
+    }
+};
 
 export const routes = express.Router();
 const app = routes; // Alias para compatibilidade com o código legado
@@ -636,6 +732,11 @@ app.get('/extract-tim', async (req, res) => {
             });
         }
 
+        // Envia os dados do VTME para alimentar/atualizar o Dashboard
+        if (vtmeResult && vtmeResult.success && Array.isArray(vtmeResult.data) && vtmeResult.data.length > 0) {
+            emitVtmeData(vtmeResult);
+        }
+
         res.json(timResult);
     } catch (e) {
         console.error("❌ Erro na rota /extract-tim:", e);
@@ -676,11 +777,38 @@ app.post('/macro-tim', async (req, res) => {
         const ctx = await initHeadedBrowser();
         const pages = ctx.pages();
         
-        // Link da Planilha 'MACRO APP 2026' atualizado
-        let sheetUrl = "https://excel.cloud.microsoft/open/onedrive/?docId=D7954F0A2A4EFE88%21s2528d66f763f4b8da594141c18e1da1c&driveId=D7954F0A2A4EFE88"; 
+        // Link da Planilha Macro configurada pelo usuário ou fallback
+        let sheetUrl = req.body.sheetUrl || "https://excel.cloud.microsoft/open/onedrive/?docId=D7954F0A2A4EFE88%21s2528d66f763f4b8da594141c18e1da1c&driveId=D7954F0A2A4EFE88"; 
         
         // Identificação via ID único da planilha para não confundir com outras
-        let sheetPage = pages.find(p => p.url().includes('s2528d66f763f4b8da594141c18e1da1c'));
+        let uniqueIdentifier = 's2528d66f763f4b8da594141c18e1da1c';
+        let decodedIdentifier = 's2528d66f763f4b8da594141c18e1da1c';
+        
+        if (req.body.sheetUrl) {
+            const docIdMatch = req.body.sheetUrl.match(/docId=([^&]+)/) || req.body.sheetUrl.match(/driveId=([^&]+)/);
+            if (docIdMatch) {
+                uniqueIdentifier = docIdMatch[1];
+                try {
+                    decodedIdentifier = decodeURIComponent(uniqueIdentifier);
+                } catch(e) {
+                    decodedIdentifier = uniqueIdentifier;
+                }
+            } else {
+                const pathMatch = req.body.sheetUrl.match(/\/([A-Za-z0-9_-]{12,})\b/);
+                if (pathMatch) {
+                    uniqueIdentifier = pathMatch[1];
+                    decodedIdentifier = uniqueIdentifier;
+                }
+            }
+        }
+
+        let sheetPage = pages.find(p => {
+            const url = p.url();
+            if (url.includes(uniqueIdentifier) || url.includes(decodedIdentifier)) return true;
+            const cleanId = uniqueIdentifier.split('%21').pop().split('!').pop();
+            if (cleanId && cleanId.length > 5 && url.includes(cleanId)) return true;
+            return false;
+        });
         
         if (!sheetPage) {
             sheetPage = await ctx.newPage();
@@ -963,12 +1091,10 @@ app.get('/send-whatsapp', async (req, res) => {
     }
 });
 
-// Conjunto para memorizar os contratos já processados
-// Vamos limpar isso a cada 5 minutos para o robô re-checar status de cancelamento
-let processedVTMEOrders = new Set();
+// Vamos limpar o cache do robô a cada 5 minutos para ele re-checar status de cancelamento e atualizações
 setInterval(() => {
     console.log("♻️ Limpando cache de pedidos processados para re-atualização...");
-    processedVTMEOrders.clear();
+    vtmeRPA.clearCache();
 }, 300000); 
 
 app.get('/extract-vtme-macro', async (req, res) => {
@@ -976,7 +1102,22 @@ app.get('/extract-vtme-macro', async (req, res) => {
         console.log("♻️ [VTME] Forçando limpeza de cache para extração manual da Macro...");
         vtmeRPA.clearCache();
         const result = await vtmeRPA.extractAuto();
+        
+        // Envia os dados do VTME para alimentar/atualizar o Dashboard
+        if (result && result.success && Array.isArray(result.data) && result.data.length > 0) {
+            emitVtmeData(result);
+        }
+        
         res.json(result);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/clear-vtme-cache', (req, res) => {
+    try {
+        vtmeRPA.clearCache();
+        res.json({ success: true, message: 'Cache do VTME limpo com sucesso.' });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
@@ -985,6 +1126,12 @@ app.get('/extract-vtme-macro', async (req, res) => {
 app.get('/extract-vtme-auto', async (req, res) => {
     try {
         const result = await vtmeRPA.extractAuto();
+        
+        // Envia os dados do VTME para alimentar/atualizar o Dashboard
+        if (result && result.success && Array.isArray(result.data) && result.data.length > 0) {
+            emitVtmeData(result);
+        }
+        
         res.json(result);
     } catch (e) {
         res.status(500).json({ error: e.message });
@@ -994,8 +1141,22 @@ app.get('/extract-vtme-auto', async (req, res) => {
 app.get('/extract', async (req, res) => {
     try {
         const result = await vtmeRPA.extractManual();
-        if (result.success) res.json(result.data);
-        else res.status(400).json(result);
+        if (result.success) {
+            const data = result.data;
+
+            // ─── BUSCA VENCIMENTO NO PARCELAMENTO.xlsx ─────────────────────
+            // Para as máscaras "Parcelamento SMB" e "Parcelamento Fibra",
+            // busca na PARCELAMENTO.xlsx todas as faturas do CPF/CNPJ
+            const docParaBusca = (data.cnpj_cliente && !data.cnpj_cliente.includes('pessoa fisica'))
+                ? data.cnpj_cliente
+                : data.cpf_cliente;
+            data.vencimento_fatura = buscarVencimentoNoParcelamento(docParaBusca || '');
+            console.log(`📊 Vencimento PARCELAMENTO [${docParaBusca}]:`, data.vencimento_fatura || '(não encontrado)');
+
+            res.json(data);
+        } else {
+            res.status(400).json(result);
+        }
     } catch (e) {
         res.status(500).json({ error: e.message });
     }

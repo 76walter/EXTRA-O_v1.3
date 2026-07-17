@@ -69,57 +69,13 @@ export function emitTimData(data) {
 }
 
 async function runVTME() {
-    if (connectedClients === 0) return;
-    if (isVtmePaused) {
-        console.log("⏸️ [VTME Loop] Extração VTME automática suspensa (Pausada).");
-        vtmeLoopTimer = setTimeout(runVTME, 15000);
-        return;
-    }
-    try {
-        const r = await fetch(`http://localhost:${ENV.PORT}/extract-vtme-auto`, {
-            headers: { 'x-internal-key': INTERNAL_API_KEY }
-        });
-        if (r.ok) {
-            const data = await r.json();
-            emitVtmeData(data);
-        }
-    } catch (e) {
-        console.error("VTME loop error", e.message);
-    } finally {
-        if (connectedClients > 0) {
-            vtmeLoopTimer = setTimeout(runVTME, 15000);
-        }
-    }
+    // A pedido do usuário, a extração automática do VTME foi desativada.
+    // Ela só iniciará quando o botão "Extrair do VTME" for clicado no frontend.
+    console.log("ℹ️ [VTME Loop] Extração automática em background desativada. Aguardando gatilho manual.");
 }
 
 async function runTIM() {
-    if (connectedClients === 0) return;
-
-    // Verifica se há algum cliente conectado que não seja CHURN
-    const sockets = ioInstance ? Array.from(ioInstance.sockets.sockets.values()) : [];
-    const hasNonChurnClient = sockets.some(s => s.perfil !== 'CHURN');
-
-    if (!hasNonChurnClient) {
-        console.log('⏸️ [TIM Loop] Varredura TIM suspensa pois o único usuário conectado é do perfil CHURN.');
-        if (connectedClients > 0) {
-            timLoopTimer = setTimeout(runTIM, 300000); // 5 minutos
-        }
-        return;
-    }
-
-    try {
-        const r = await fetch(`http://localhost:${ENV.PORT}/extract-tim`, {
-            headers: { 'x-internal-key': INTERNAL_API_KEY }
-        });
-        if (r.ok) {
-            const data = await r.json();
-            emitTimData(data);
-        }
-    } catch (e) {
-        console.error("TIM loop error", e.message);
-    } finally {
-        if (connectedClients > 0) {
-            timLoopTimer = setTimeout(runTIM, 300000); // 5 minutos
-        }
-    }
+    // A pedido do usuário, a extração automática do TIM foi desativada.
+    // Ela só iniciará quando o botão "Extrair do App" for clicado no frontend.
+    console.log("ℹ️ [TIM Loop] Extração automática em background desativada. Aguardando gatilho manual.");
 }

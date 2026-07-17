@@ -20,7 +20,7 @@
     "jsonwebtoken": "^9.0.2",
     "jspdf": "^4.2.1",
     "lucide-react": "^0.438.0",
-    "mariadb": "^3.3.0",
+    "better-sqlite3": "^11.9.1",
     "playwright": "^1.59.1",
     "playwright-extra": "^4.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
@@ -47,7 +47,7 @@
     "appId": "com.extracao.vtme",
     "productName": "Extrator VTME",
     "directories": {
-      "output": "C:/Extrator_Release"
+      "output": "./release"
     },
     "files": [
       "dist/**/*",

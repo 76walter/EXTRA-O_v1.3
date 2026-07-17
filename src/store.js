@@ -108,7 +108,8 @@ export const useStore = create(
           data.forEach(novoItem => {
             const logIndex = currentLogs.findIndex(pl => 
               pl.cliente === novoItem.cliente || 
-              (novoItem.cpf && pl.cpf === novoItem.cpf)
+              (novoItem.cpf && novoItem.cpf !== '--' && pl.cpf === novoItem.cpf) ||
+              (novoItem.cnpj && novoItem.cnpj !== '--' && pl.cnpj === novoItem.cnpj)
             );
 
             const novoStatus = novoItem.statusCanc === 'SOLICITADO' ? '✅ SOLICITADO' : '⏳ PENDENTE';
@@ -119,9 +120,14 @@ export const useStore = create(
             let foundUf = novoItem.uf || '--';
 
             const cleanCPF = novoItem.cpf && novoItem.cpf !== '--' ? novoItem.cpf.replace(/\D/g, '') : '';
+            const cleanCNPJ = novoItem.cnpj && novoItem.cnpj !== '--' ? novoItem.cnpj.replace(/\D/g, '') : '';
             let timItemIndex = -1;
+            
             if (cleanCPF) {
               timItemIndex = timList.findIndex(t => t.cpf && t.cpf.replace(/\D/g, '') === cleanCPF);
+            }
+            if (timItemIndex === -1 && cleanCNPJ) {
+              timItemIndex = timList.findIndex(t => t.cnpj && t.cnpj.replace(/\D/g, '') === cleanCNPJ);
             }
             if (timItemIndex === -1 && novoItem.cliente && novoItem.cliente !== 'Desconhecido') {
               const searchName = novoItem.cliente.trim().toLowerCase();
@@ -155,7 +161,8 @@ export const useStore = create(
                 data: new Date().toLocaleDateString('pt-BR'),
                 hora: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
                 cliente: novoItem.cliente || 'NOME NÃO ENCONTRADO',
-                cpf: novoItem.cpf,
+                cpf: novoItem.cpf || '--',
+                cnpj: novoItem.cnpj || '--',
                 bio: novoItem.bio || '--',
                 uf: foundUf,
                 consultor: novoItem.consultor || 'Consultor',
@@ -209,6 +216,16 @@ export const useStore = create(
 
               if (novoItem.supervisor && novoItem.supervisor !== 'Supervisor' && novoItem.supervisor !== 'Não Identificado' && (!updatedLog.supervisor || updatedLog.supervisor === 'Supervisor' || updatedLog.supervisor === 'Não Identificado')) {
                 updatedLog.supervisor = novoItem.supervisor;
+                wasUpdated = true;
+              }
+
+              if (novoItem.cpf && novoItem.cpf !== '--' && (!updatedLog.cpf || updatedLog.cpf === '--')) {
+                updatedLog.cpf = novoItem.cpf;
+                wasUpdated = true;
+              }
+
+              if (novoItem.cnpj && novoItem.cnpj !== '--' && (!updatedLog.cnpj || updatedLog.cnpj === '--')) {
+                updatedLog.cnpj = novoItem.cnpj;
                 wasUpdated = true;
               }
 

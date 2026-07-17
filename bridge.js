@@ -5,7 +5,7 @@ import { chromium } from 'playwright';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import * as XLSX from 'xlsx';
+import XLSX from 'xlsx';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,8 +16,9 @@ app.use(express.json());
 
 const MASKS_FILE = path.join(__dirname, 'masks.json');
 const PLANILHA_FILE = path.join(__dirname, 'planilha.xlsx');
+const PARCELAMENTO_FILE = path.join(__dirname, 'PARCELAMENTO.xlsx');
 
-// ─── BUSCA VENCIMENTO NA PLANILHA ───────────────────────────────────────────
+// ─── BUSCA VENCIMENTO NA PLANILHA (planilha.xlsx) ───────────────────────────
 const buscarVencimentoNaPlanilha = (documento) => {
     try {
         if (!documento) return '';
@@ -73,6 +74,109 @@ const buscarVencimentoNaPlanilha = (documento) => {
         return '';
     } catch (e) {
         console.error('❌ Erro ao buscar vencimento na planilha:', e.message);
+        return '';
+    }
+};
+
+// ─── BUSCA VENCIMENTO NO PARCELAMENTO.xlsx (para máscaras Parcelamento SMB/Fibra) ──
+// Busca TODAS as linhas que batem com o CPF/CNPJ na coluna A,
+// extrai coluna G (data vencimento) e coluna H (valor da fatura),
+// e retorna no formato: "07/05/2026 = R$ 4,23" (uma linha por fatura)
+const buscarVencimentoNoParcelamento = (documento) => {
+    try {
+        logDebug(`🔍 buscarVencimentoNoParcelamento chamada para documento: "${documento}"`);
+        if (!documento) {
+            logDebug(`⚠️ documento vazio, retornando vazio`);
+            return '';
+        }
+        const docLimpo = documento.replace(/\D/g, '');
+        logDebug(`📋 documento limpo: "${docLimpo}"`);
+        if (docLimpo.length < 6) {
+            logDebug(`⚠️ documento muito curto (<6 dígitos), retornando vazio`);
+            return '';
+        }
+
+        logDebug(`📂 Caminho resolvido da planilha: "${PARCELAMENTO_FILE}"`);
+        if (!fs.existsSync(PARCELAMENTO_FILE)) {
+            logDebug(`❌ Arquivo não encontrado em: "${PARCELAMENTO_FILE}"`);
+            console.warn('⚠️ PARCELAMENTO.xlsx não encontrada em:', PARCELAMENTO_FILE);
+            return '';
+        }
+
+        logDebug(`📖 Lendo planilha...`);
+        const workbook = XLSX.readFile(PARCELAMENTO_FILE);
+        logDebug(`Abas encontradas: [${workbook.SheetNames.join(', ')}]`);
+        const resultados = [];
+
+        // Padroniza o documento para matching flexível (pad com zeros à esquerda)
+        const docPadded = docLimpo.padStart(11, '0');
+
+        // Busca em TODAS as abas (JUNHO-JULHO e MARÇO-MAIO)
+        for (const sheetName of workbook.SheetNames) {
+            const sheet = workbook.Sheets[sheetName];
+            const dados = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: true });
+            logDebug(`Processando aba "${sheetName}" com ${dados.length} linhas`);
+
+            for (let i = 1; i < dados.length; i++) {
+                const linha = dados[i];
+                if (!linha[0]) continue;
+
+                const cellVal = String(linha[0]).replace(/\D/g, '');
+                if (!cellVal) continue;
+
+                // Matching flexível (igual à extensão): exato, includes ou padded
+                const cellPadded = cellVal.padStart(11, '0');
+                const isMatch = (cellVal === docLimpo) ||
+                                (cellPadded === docPadded) ||
+                                (cellVal.includes(docLimpo)) ||
+                                (docLimpo.includes(cellVal) && cellVal.length >= 6);
+
+                if (isMatch) {
+                    const colG = linha[6]; // Coluna G — VENCIMENTO FATURA
+                    const colH = linha[7]; // Coluna H — VALOR DA FATURA(S)
+
+                    // Formata data da coluna G
+                    let dataFormatada = '';
+                    if (colG !== '' && colG !== undefined && colG !== null) {
+                        if (typeof colG === 'number') {
+                            const d = XLSX.SSF.parse_date_code(colG);
+                            dataFormatada = `${String(d.d).padStart(2,'0')}/${String(d.m).padStart(2,'0')}/${d.y}`;
+                        } else {
+                            dataFormatada = String(colG).trim();
+                        }
+                    }
+
+                    // Formata valor da coluna H (formato igual à extensão: R$  valor)
+                    let valorFormatado = '';
+                    if (colH !== '' && colH !== undefined && colH !== null) {
+                        if (typeof colH === 'number') {
+                            valorFormatado = `R$  ${colH.toFixed(2).replace('.', ',')}`;
+                        } else {
+                            valorFormatado = String(colH).replace('.', ',').trim();
+                            if (!valorFormatado.toUpperCase().includes('R$') && /\d/.test(valorFormatado)) {
+                                valorFormatado = `R$  ${valorFormatado}`;
+                            }
+                        }
+                    }
+
+                    if (dataFormatada || valorFormatado) {
+                        const matchResult = `${dataFormatada}   =   ${valorFormatado}`.trim();
+                        logDebug(`🎯 MATCH na aba "${sheetName}" linha ${i+1}: "${matchResult}" (original ColA="${linha[0]}")`);
+                        resultados.push(matchResult);
+                    }
+                }
+            }
+        }
+
+        if (resultados.length > 0) {
+            logDebug(`✅ Faturas encontradas: ${resultados.length}`);
+            return resultados.join('\n');
+        }
+        logDebug(`❌ Nenhuma fatura correspondente na planilha.`);
+        return '';
+    } catch (e) {
+        logDebug(`❌ Erro no buscarVencimentoNoParcelamento: ${e.message}`);
+        console.error('❌ Erro ao buscar vencimento no PARCELAMENTO.xlsx:', e.message);
         return '';
     }
 };
@@ -733,7 +837,18 @@ app.get('/extract-tim-auto', async (req, res) => {
             console.log(`✅ Auto TIM: ${finalResults.length} novos pedidos processados.`);
         } else {
             console.log("🟡 Auto TIM: Nenhum pedido novo encontrado.");
-    app.post('/macro-tim', async (req, res) => {
+        }
+
+        res.json({ success: true, data: finalResults });
+    } catch (error) {
+        console.error("Erro Auto TIM:", error);
+        res.status(500).json({ error: error.message });
+    } finally {
+        isExtractingTim = false;
+    }
+});
+
+app.post('/macro-tim', async (req, res) => {
     try {
         const payload = req.body.data;
         if (!payload) return res.status(400).json({ error: 'Nenhum dado fornecido' });
@@ -763,11 +878,38 @@ app.get('/extract-tim-auto', async (req, res) => {
         const ctx = await initBrowser();
         const pages = ctx.pages();
         
-        // Link da Planilha 'MACRO APP 2026' atualizado
-        let sheetUrl = "https://excel.cloud.microsoft/open/onedrive/?docId=D7954F0A2A4EFE88%21s2528d66f763f4b8da594141c18e1da1c&driveId=D7954F0A2A4EFE88"; 
+        // Link da Planilha Macro configurada pelo usuário ou fallback
+        let sheetUrl = req.body.sheetUrl || "https://excel.cloud.microsoft/open/onedrive/?docId=D7954F0A2A4EFE88%21s2528d66f763f4b8da594141c18e1da1c&driveId=D7954F0A2A4EFE88"; 
         
         // Identificação via ID único da planilha para não confundir com outras
-        let sheetPage = pages.find(p => p.url().includes('s2528d66f763f4b8da594141c18e1da1c'));
+        let uniqueIdentifier = 's2528d66f763f4b8da594141c18e1da1c';
+        let decodedIdentifier = 's2528d66f763f4b8da594141c18e1da1c';
+        
+        if (req.body.sheetUrl) {
+            const docIdMatch = req.body.sheetUrl.match(/docId=([^&]+)/) || req.body.sheetUrl.match(/driveId=([^&]+)/);
+            if (docIdMatch) {
+                uniqueIdentifier = docIdMatch[1];
+                try {
+                    decodedIdentifier = decodeURIComponent(uniqueIdentifier);
+                } catch(e) {
+                    decodedIdentifier = uniqueIdentifier;
+                }
+            } else {
+                const pathMatch = req.body.sheetUrl.match(/\/([A-Za-z0-9_-]{12,})\b/);
+                if (pathMatch) {
+                    uniqueIdentifier = pathMatch[1];
+                    decodedIdentifier = uniqueIdentifier;
+                }
+            }
+        }
+
+        let sheetPage = pages.find(p => {
+            const url = p.url();
+            if (url.includes(uniqueIdentifier) || url.includes(decodedIdentifier)) return true;
+            const cleanId = uniqueIdentifier.split('%21').pop().split('!').pop();
+            if (cleanId && cleanId.length > 5 && url.includes(cleanId)) return true;
+            return false;
+        });
         
         if (!sheetPage) {
             sheetPage = await ctx.newPage();
@@ -892,6 +1034,7 @@ app.get('/extract-tim-auto', async (req, res) => {
         console.error("Erro ao preencher Macro:", error);
         res.status(500).json({ error: 'Erro ao preencher Macro' });
     }
+});
 
 
 async function getVTMEPage() {
@@ -1384,9 +1527,32 @@ app.get('/extract-vtme-auto', async (req, res) => {
                         };
 
                         const rawCliente = getVal('Cliente') || getVal('Nome') || "Desconhecido";
-                        const rawCpf = getVal('CPF') || checkId;
                         const cliente = rawCliente.toLowerCase() === 'cliente' ? 'Desconhecido' : rawCliente;
-                        const cpf = rawCpf.toLowerCase() === 'cpf' ? checkId : rawCpf;
+                        
+                        let cpf = '--';
+                        let cnpj = '--';
+                        
+                        const rawCpfVal = getVal('CPF');
+                        if (rawCpfVal && rawCpfVal.toLowerCase() !== 'cpf') {
+                            if (rawCpfVal.replace(/\D/g, '').length > 11) {
+                                cnpj = rawCpfVal;
+                            } else {
+                                cpf = rawCpfVal;
+                            }
+                        }
+                        
+                        const rawCnpjVal = getVal('CNPJ');
+                        if (rawCnpjVal && rawCnpjVal.toLowerCase() !== 'cnpj') {
+                            if (rawCnpjVal.replace(/\D/g, '').length > 11) {
+                                cnpj = rawCnpjVal;
+                            }
+                        }
+
+                        // Fallback to checkId if neither is found
+                        if (cpf === '--' && cnpj === '--') {
+                            cpf = checkId;
+                        }
+
                         const rawConsultor = getVal('Consultor') || getVal('Consultor(a)') || getVal('Vendedor') || "Consultor";
                         const consultor = rawConsultor.split('-')[0].trim();
                         
@@ -1411,7 +1577,7 @@ app.get('/extract-vtme-auto', async (req, res) => {
                         }
                         
                         return { 
-                            cliente, cpf, 
+                            cliente, cpf, cnpj,
                             consultor: consultor === 'Consultor' ? 'Não Identificado' : consultor,
                             supervisor: supervisor === 'Supervisor' ? 'Não Identificado' : supervisor,
                             uf: document.body.innerText.match(/\/\s*([A-Z]{2})/)?.[1] || "--",
@@ -1766,28 +1932,28 @@ app.get('/extract', async (req, res) => {
 
                 const xpathTelefone = "/html/body/div[1]/div/orb-modal-v3/div/div[2]/div/div/orb-dynamic-component/pedido-modal/div[2]/pedido-visualizar/div/div/div[7]/pedido-visualizar-pessoas/div/orb-card-v3[1]/div/div/div/div[2]/orb-card-row-v3[2]/div/div[2]/div";
                 const telEl = getElementByXPath(xpathTelefone);
-                if (telEl && !data.vtme_contato1) {
+                if (telEl && (!data.vtme_contato1 || !data.vtme_contato2)) {
                     const strongsInternos = telEl.querySelectorAll('strong');
                     if (strongsInternos.length > 0) {
                         strongsInternos.forEach(si => {
                             if (si.innerText.includes('Contato 1') && si.nextElementSibling) {
                                 const val = si.nextElementSibling.innerText.replace('·', '').trim();
-                                if (isValidPhoneNumber(val)) data.vtme_contato1 = val;
+                                if (isValidPhoneNumber(val) && !data.vtme_contato1) data.vtme_contato1 = val;
                             }
                             if (si.innerText.includes('Contato 2') && si.nextElementSibling) {
                                 const val = si.nextElementSibling.innerText.replace('·', '').trim();
-                                if (isValidPhoneNumber(val)) data.vtme_contato2 = val;
+                                if (isValidPhoneNumber(val) && !data.vtme_contato2) data.vtme_contato2 = val;
                             }
                         });
                     } else {
                         const spans = telEl.querySelectorAll('span.ng-binding');
                         if (spans.length > 0) {
                             let telefonesList = Array.from(spans).map(s => s.innerText.replace('·', '').trim()).filter(txt => txt.length > 0 && isValidPhoneNumber(txt));
-                            if (telefonesList[0]) data.vtme_contato1 = telefonesList[0];
-                            if (telefonesList[1]) data.vtme_contato2 = telefonesList[1];
+                            if (telefonesList[0] && !data.vtme_contato1) data.vtme_contato1 = telefonesList[0];
+                            if (telefonesList[1] && !data.vtme_contato2) data.vtme_contato2 = telefonesList[1];
                         } else {
                             const val = telEl.innerText.trim();
-                            if (isValidPhoneNumber(val)) data.vtme_contato1 = val;
+                            if (isValidPhoneNumber(val) && !data.vtme_contato1) data.vtme_contato1 = val;
                         }
                     }
                 }
@@ -1807,6 +1973,120 @@ app.get('/extract', async (req, res) => {
                 }
             } catch (e) {
                 console.error("Erro na extração de dados alternativos do Representante:", e);
+            }
+
+            // 6.1 FALLBACK ROBUSTO: Busca Contato 1/2 por <strong> em qualquer lugar do modal visível
+            try {
+                if (!data.vtme_contato1 || !data.vtme_contato2) {
+                    const modalEl = Array.from(document.querySelectorAll('pedido-tim-fibra-modal, pedido-modal, orb-modal-v3, .modal-content'))
+                                         .find(el => el.offsetWidth > 0 && el.offsetHeight > 0) || document;
+                    const allStrongs = Array.from(modalEl.querySelectorAll('strong'));
+                    for (const si of allStrongs) {
+                        const txt = si.innerText.trim();
+                        if (txt.includes('Contato 1') && !data.vtme_contato1) {
+                            const nextSpan = si.nextElementSibling;
+                            if (nextSpan) {
+                                const val = nextSpan.innerText.replace(/·/g, '').trim();
+                                if (val && isValidPhoneNumber(val)) data.vtme_contato1 = val;
+                            }
+                        }
+                        if (txt.includes('Contato 2') && !data.vtme_contato2) {
+                            const nextSpan = si.nextElementSibling;
+                            if (nextSpan) {
+                                const val = nextSpan.innerText.replace(/·/g, '').trim();
+                                if (val && isValidPhoneNumber(val)) data.vtme_contato2 = val;
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error("Erro no fallback de Contato 1/2:", e);
+            }
+
+            // 6.2 FALLBACK ROBUSTO: Busca Email, Nascimento e Mãe por <strong> no pedido-modal
+            try {
+                const modalEl = Array.from(document.querySelectorAll('pedido-tim-fibra-modal, pedido-modal, orb-modal-v3, .modal-content'))
+                                     .find(el => el.offsetWidth > 0 && el.offsetHeight > 0) || document;
+                const allStrongs = Array.from(modalEl.querySelectorAll('strong'));
+                for (const si of allStrongs) {
+                    const txt = si.innerText.trim().replace(':', '').trim().toUpperCase();
+
+                    // Email
+                    if (txt === 'E-MAIL' || txt === 'EMAIL') {
+                        const nextSpan = si.nextElementSibling;
+                        if (nextSpan) {
+                            const val = nextSpan.innerText.trim();
+                            if (val && val.includes('@')) data.email = val;
+                        }
+                    }
+
+                    // Data de Nascimento
+                    if (txt === 'DATA DE NASCIMENTO' || txt === 'NASCIMENTO' || txt === 'NASC' || txt === 'DATA DE NASC.') {
+                        const nextSpan = si.nextElementSibling;
+                        if (nextSpan) {
+                            const val = nextSpan.innerText.trim();
+                            if (val && /\d{2}\/\d{2}\/\d{4}/.test(val)) {
+                                data.data_nascimento = val.match(/\d{2}\/\d{2}\/\d{4}/)[0];
+                            }
+                        }
+                    }
+
+                    // Nome da Mãe
+                    if (txt === 'NOME DA MÃE' || txt === 'NOME DA MAE' || txt === 'MÃE' || txt === 'MAE') {
+                        const nextSpan = si.nextElementSibling;
+                        if (nextSpan) {
+                            const val = nextSpan.innerText.trim();
+                            // Só aceita se NÃO parecer endereço/CEP
+                            if (val && val.length > 2 && !val.match(/CEP|^\d{5}/) && !val.match(/\/\s*[A-Z]{2}\s*$/)) {
+                                data.nome_mae = val;
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error("Erro no fallback de Email/Nascimento/Mãe:", e);
+            }
+
+            // 6.3 FALLBACK ROBUSTO: Representante / Responsável em pedido-modal
+            try {
+                const pessoasContainer = document.querySelector('pedido-visualizar-pessoas');
+                if (pessoasContainer) {
+                    const firstCard = pessoasContainer.querySelector('orb-card-v3, .orb-card-v3');
+                    if (firstCard) {
+                        const rows = Array.from(firstCard.querySelectorAll('orb-card-row-v3, .orb-card-row-v3'));
+                        rows.forEach(row => {
+                            const text = (row.innerText || "").trim();
+                            if (!text) return;
+                            
+                            const labelEl = row.querySelector('strong, label, b, .orb-card-label');
+                            const labelText = labelEl ? labelEl.innerText.trim().toUpperCase() : "";
+                            const valEl = row.querySelector('span.ng-binding, span, div.col-md-9, div:last-child');
+                            let val = valEl ? valEl.innerText.trim() : "";
+                            
+                            if (!val) {
+                                val = text.replace(labelText, '').replace(/^[:\s\-\·\•\s]+/, '').trim();
+                            }
+                            
+                            const icon = row.getAttribute('orb-icon') || "";
+                            
+                            if (labelText.includes('NOME') || text.toUpperCase().startsWith('NOME:')) {
+                                if (val && !data.cnpj_nome_rep) data.cnpj_nome_rep = val;
+                            }
+                            else if (labelText.includes('CPF') || text.toUpperCase().startsWith('CPF:') || icon === 'cpf') {
+                                const cleanCPF = val.replace(/\D/g, '');
+                                if (cleanCPF.length === 11 && !data.cnpj_cpf_rep) data.cnpj_cpf_rep = val;
+                            }
+                            else if (labelText.includes('EMAIL') || labelText.includes('E-MAIL') || text.toUpperCase().startsWith('EMAIL:') || icon === 'email' || val.includes('@')) {
+                                if (val && !data.cnpj_email_rep) data.cnpj_email_rep = val;
+                            }
+                            else if (labelText.includes('NASCIMENTO') || labelText.includes('DATA DE') || text.toUpperCase().startsWith('DATA') || icon === 'calendario') {
+                                if (val && !data.cnpj_nasc_rep) data.cnpj_nasc_rep = val;
+                            }
+                        });
+                    }
+                }
+            } catch (e) {
+                console.error("Erro no fallback de pedido-visualizar-pessoas:", e);
             }
 
             // EXTRAÇÃO EXCLUSIVA DO NOME FANTASIA (CARD 4)
@@ -1936,22 +2216,26 @@ app.get('/extract', async (req, res) => {
                 }
             });
 
-            const pageText = document.body.innerText;
+            // Busca o modal ativo para restringir a busca de texto apenas aos dados do contrato atual (evita pegar dados de outros clientes do grid em segundo plano)
+            const modalEl = Array.from(document.querySelectorAll('pedido-tim-fibra-modal, pedido-modal, orb-modal-v3, .modal-content'))
+                                 .find(el => el.offsetWidth > 0 && el.offsetHeight > 0) || document.body;
+            const modalText = modalEl.innerText;
+
             if (!data.cnpj) {
-                const cnpjMatch = pageText.match(/\d{2}\.\d{3}\.\d{3}\/\d{4}\-\d{2}/) || pageText.match(/\b\d{14}\b/);
+                const cnpjMatch = modalText.match(/\d{2}\.\d{3}\.\d{3}\/\d{4}\-\d{2}/) || modalText.match(/\b\d{14}\b/);
                 if (cnpjMatch) data.cnpj = cnpjMatch[0];
             }
 
             if (!data.uf) {
-                const ufMatch = pageText.match(/[\/\-]\s*([A-Z]{2})\s*$/m) || pageText.match(/[\/\-]\s*([A-Z]{2})\b/);
+                const ufMatch = modalText.match(/[\/\-]\s*([A-Z]{2})\s*$/m) || modalText.match(/[\/\-]\s*([A-Z]{2})\b/);
                 if (ufMatch) data.uf = ufMatch[1].toUpperCase().trim();
             }
 
             // --- POS-PROCESSAMENTO E VALIDACAO CPF VS CNPJ ---
-            // Se cpf_cliente vier com 14 dígitos, é na verdade um CNPJ
+            // Se cpf_cliente vier com mais de 11 dígitos, é na verdade um CNPJ
             if (data.cpf_cliente) {
                 const cleanDoc = data.cpf_cliente.replace(/\D/g, '');
-                if (cleanDoc.length === 14) {
+                if (cleanDoc.length > 11) {
                     data.cnpj = data.cpf_cliente;
                     data.cpf_cliente = "";
                 }
@@ -2048,7 +2332,8 @@ app.get('/extract', async (req, res) => {
             const hasCnpj = data.cnpj && data.cnpj.replace(/\D/g, '').length > 0;
             if (hasCnpj) {
                 finalCNPJ = data.cnpj;
-                finalCPF = data.cnpj_cpf_rep || data.cpf_cliente || "";
+                const cpfCandidate = data.cnpj_cpf_rep || data.cpf_cliente || "";
+                finalCPF = cpfCandidate.replace(/\D/g, '').length > 11 ? "" : cpfCandidate;
             } else {
                 finalCPF = data.cpf_cliente || "";
                 finalCNPJ = "este cliente é pessoa fisica (PF)";
@@ -2071,10 +2356,10 @@ app.get('/extract', async (req, res) => {
                 supervisor: data.supervisor || "",
                 protocolo: data.protocolo || "",
                 nome_fantasia: data.nome_fantasia || "",
-                cnpj_nome_rep: data.cnpj_nome_rep || "",
-                cnpj_cpf_rep: data.cnpj_cpf_rep || "",
-                cnpj_email_rep: data.cnpj_email_rep || "",
-                cnpj_nasc_rep: data.cnpj_nasc_rep || "",
+                cnpj_nome_rep: data.cnpj_nome_rep || data.admin_nome || "",
+                cnpj_cpf_rep: data.cnpj_cpf_rep || (finalCNPJ !== "este cliente é pessoa fisica (PF)" ? finalCPF : "") || "",
+                cnpj_email_rep: data.cnpj_email_rep || data.admin_email || "",
+                cnpj_nasc_rep: data.cnpj_nasc_rep || data.smb_nasc_rep || "",
                 bio: data.bio || "--"
             };
         });
@@ -2088,12 +2373,14 @@ app.get('/extract', async (req, res) => {
             data.tel2 = "";
         }
 
-        // ─── BUSCA VENCIMENTO NA PLANILHA ────────────────────────────────
+        // ─── BUSCA VENCIMENTO NO PARCELAMENTO.xlsx ─────────────────────────
+        // Para as máscaras "Parcelamento SMB" e "Parcelamento Fibra",
+        // busca na PARCELAMENTO.xlsx todas as faturas do CPF/CNPJ
         const docParaBusca = (data.cnpj_cliente && !data.cnpj_cliente.includes('pessoa fisica'))
             ? data.cnpj_cliente
             : data.cpf_cliente;
-        data.vencimento_fatura = buscarVencimentoNaPlanilha(docParaBusca || '');
-        console.log(`📊 Vencimento planilha [${docParaBusca}]:`, data.vencimento_fatura || '(não encontrado)');
+        data.vencimento_fatura = buscarVencimentoNoParcelamento(docParaBusca || '');
+        console.log(`📊 Vencimento PARCELAMENTO [${docParaBusca}]:`, data.vencimento_fatura || '(não encontrado)');
 
         res.json(data);
     } catch (error) {
