@@ -15,7 +15,7 @@ Churn 01-2026 Janeiro.xlsx
 sessão.status.md
 documentação.md
 planilha.xlsx
-MACRO APP 2026.xlsm
+
 .env
 
 # Banco de dados local SQLite
@@ -29,7 +29,7 @@ launched_tim_orders.json
 release/
 
 # Planilhas de dados locais
-PARCELAMENTO.xlsx
+
 
 # Rascunhos locais
 scratch/
